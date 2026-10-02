@@ -14,7 +14,16 @@
     --bg:#faf6f0; --panel:#ffffff; --panel2:#f2eade; --line:#e6dacb;
     --ink:#3b3028; --dim:#7a6a5c; --faint:#a89683;
     --signal:#cf8a14; --done:#6e8f5f; --alert:#b5402f; --key:#7a5c44; --other:#4a7b9d;
+    --onkey:#fff; --ondisp:#fff; --rowtint:5%; --celltint:7%; --shadow:rgba(80,60,40,.07);
     --pad:12px; --rowh:max(94px,16vh);
+  }
+  /* Night mode: the same warm family pulled down into deep browns, so the signal
+     colours keep their meaning instead of becoming a second palette to learn. */
+  :root[data-theme="dark"]{
+    --bg:#1b1411; --panel:#261d18; --panel2:#33271f; --line:#42332a;
+    --ink:#f1e5d9; --dim:#b4a08d; --faint:#8b7462;
+    --signal:#e0a23a; --done:#80a86e; --alert:#dd6e55; --key:#b48a66; --other:#6fa0c5;
+    --onkey:#241a13; --ondisp:#1b1411; --rowtint:13%; --celltint:16%; --shadow:rgba(0,0,0,.35);
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{margin:0;background:var(--bg);color:var(--ink);overscroll-behavior-y:contain}
@@ -38,25 +47,26 @@
   .stamp{font-size:11px;color:var(--faint);margin-left:auto;text-align:right;line-height:1.3}
   .hrow{display:flex;gap:6px;margin-top:7px;align-items:center}
   #q{flex:1;min-width:0;padding:7px 10px;font-size:14px}
+  .theme{flex:none;background:transparent;color:var(--dim);font-size:16px;padding:4px 5px;line-height:1}
   .modes{display:flex;background:var(--panel2);border-radius:8px;padding:2px;gap:2px}
   .modes button{background:transparent;color:var(--dim);padding:5px 9px;font-size:12.5px}
-  .modes button[aria-pressed="true"]{background:var(--key);color:#fff;font-weight:650}
+  .modes button[aria-pressed="true"]{background:var(--key);color:var(--onkey);font-weight:650}
   .zones{display:flex;gap:5px;overflow-x:auto;margin-top:7px;scrollbar-width:none}
   .zones::-webkit-scrollbar{display:none}
   .zones button{flex:none;background:var(--panel2);color:var(--dim);padding:5px 11px;font-size:12.5px}
-  .zones button[aria-pressed="true"]{background:var(--ink);color:#fff;font-weight:650}
+  .zones button[aria-pressed="true"]{background:var(--ink);color:var(--bg);font-weight:650}
 
   /* ---- list mode ---- */
   .row{display:grid;grid-template-columns:52px 1fr auto;gap:9px;align-items:center;
     padding:7px var(--pad) 7px calc(var(--pad) - 3px);border-bottom:1px solid var(--line);
     border-left:3px solid var(--disp,var(--line));cursor:pointer}
-  .row[data-d="A"],.row[data-d="O"],.row[data-d="X"]{background:color-mix(in srgb,var(--disp) 5%,transparent)}
+  .row[data-d="A"],.row[data-d="O"],.row[data-d="X"]{background:color-mix(in srgb,var(--disp) var(--rowtint),transparent)}
   .rbed{font-size:17px;font-weight:700;line-height:1.1;word-break:break-all}
   .rmid{min-width:0}
   .rtop{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap}
   .rname{font-size:15.5px;font-weight:600}
   .chip{font-size:11.5px;font-weight:700;padding:1px 7px;border-radius:5px;line-height:1.5;white-space:nowrap}
-  .chip.disp{background:var(--disp);color:#fff}
+  .chip.disp{background:var(--disp);color:var(--ondisp)}
   .chip.disp[data-blank="1"]{background:var(--panel2);color:var(--faint)}
   .chip.dept{background:var(--panel2);color:var(--ink)}
   .rsub{font-size:11.5px;color:var(--faint);margin-top:1px}
@@ -66,11 +76,11 @@
   /* ---- block mode ---- */
   .zone h2{margin:12px var(--pad) 6px;font-size:11px;letter-spacing:.08em;color:var(--faint);font-weight:650}
   .grid{display:grid;grid-template-columns:repeat(5,1fr);gap:5px;padding:0 var(--pad)}
-  .cell{height:var(--rowh);border-radius:9px;background:var(--panel);box-shadow:0 1px 3px rgba(80,60,40,.07);padding:5px 5px 4px;overflow:hidden;
+  .cell{height:var(--rowh);border-radius:9px;background:var(--panel);box-shadow:0 1px 3px var(--shadow);padding:5px 5px 4px;overflow:hidden;
     display:flex;flex-direction:column;cursor:pointer;border:1.5px solid var(--disp,var(--line))}
   .cell[data-d="A"],.cell[data-d="O"],.cell[data-d="X"]{
-    background:color-mix(in srgb,var(--disp) 7%,#fff);
-    box-shadow:0 1px 3px rgba(80,60,40,.07),0 0 10px -5px var(--disp)}
+    background:color-mix(in srgb,var(--disp) var(--celltint),var(--panel));
+    box-shadow:0 1px 3px var(--shadow),0 0 10px -5px var(--disp)}
   .cell.hole{background:transparent;border:1px dashed var(--line);opacity:.3;cursor:default}
   .ctop{display:flex;align-items:center;gap:3px}
   .cbed{font-size:10px;color:var(--faint);font-weight:650;line-height:1}
@@ -79,13 +89,11 @@
   .cmid{display:flex;align-items:center;gap:4px;margin-top:2px;font-size:11px;color:var(--dim)}
   .ctodo{margin-left:auto;font-weight:700;color:var(--faint);white-space:nowrap}
   .ctodo.on{color:var(--signal)} .ctodo.hot{color:var(--alert)}
-  .ccc{font-size:9.5px;line-height:1.3;color:var(--faint);margin-top:2px;overflow:hidden;
-    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
-  @media (min-width:620px){:root{--rowh:max(118px,18vh)} .cname{font-size:18px} .ccc{font-size:11px}}
+  @media (min-width:620px){:root{--rowh:max(112px,17vh)} .cname{font-size:19px} .cmid{font-size:12.5px}}
 
   .pill{background:var(--panel2);border-radius:20px;padding:1px 8px;font-size:11.5px;font-weight:650;color:var(--dim)}
-  .pill.on{background:var(--signal);color:#fff}
-  .pill.hot{background:var(--alert);color:#fff}
+  .pill.on{background:var(--signal);color:var(--ondisp)}
+  .pill.hot{background:var(--alert);color:var(--ondisp)}
 
   .blank{padding:46px var(--pad);text-align:center;color:var(--dim)}
   .blank b{display:block;color:var(--ink);font-size:16px;margin-bottom:6px}
@@ -100,16 +108,22 @@
   .page.on{display:flex}
   .phead{display:flex;gap:8px;align-items:flex-start;padding:9px var(--pad);
     border-bottom:1px solid var(--line);border-left:4px solid var(--disp,var(--line));
-    background:color-mix(in srgb,var(--disp,var(--line)) 5%,var(--panel))}
+    background:color-mix(in srgb,var(--disp,var(--line)) var(--rowtint),var(--panel))}
   .phead .x{margin-left:auto;background:transparent;color:var(--dim);font-size:21px;line-height:1;padding:0 4px}
   .pcol{min-width:0;flex:1}
   .prow1{display:flex;align-items:center;gap:8px}
   .pbed{font-size:19px;font-weight:800;line-height:1.1;white-space:nowrap}
   .pname{font-size:19px;font-weight:650;line-height:1.1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .pdisp{flex:none;width:58px;margin-left:auto;padding:3px 6px;font-size:16px;font-weight:800;
-    text-align:center;color:var(--disp);border-color:var(--disp);background:var(--panel)}
+  .pdisp{flex:none;min-width:54px;margin-left:auto;padding:5px 8px;font-size:16px;font-weight:800;
+    text-align:center;color:var(--disp);background:transparent;
+    border:1.5px solid var(--disp);border-radius:8px}
   .pdisp[data-blank="1"]{color:var(--faint);border-color:var(--line);font-weight:600}
-  .undo{flex:none;background:transparent;color:var(--dim);padding:2px 4px;font-size:15px;line-height:1}
+  .pfree{flex:none;width:76px;padding:4px 7px;font-size:14px;font-weight:700;text-align:center}
+  .pbedwait{flex:none;padding:5px 10px;font-size:14px;font-weight:700;border:1.5px solid var(--line);
+    border-radius:8px;background:transparent;color:var(--faint)}
+  .pbedwait[aria-pressed="true"]{background:var(--other);border-color:var(--other);color:var(--ondisp)}
+  .chip.bedwait{background:var(--other);color:var(--ondisp)}
+  .cwait{font-size:10px;font-weight:800;color:var(--other);line-height:1}
   .prow2{font-size:12px;color:var(--dim);margin-top:2px;display:flex;gap:10px;flex-wrap:wrap}
   .pcc{font-size:12.5px;color:var(--ink);margin-top:4px;line-height:1.45}
   .pcc b{font-weight:700;margin-right:5px}
@@ -118,10 +132,10 @@
   .pbody{flex:1;overflow:auto;padding:0 var(--pad) 24px}
   .seg{display:flex;gap:6px;margin:12px 0 8px}
   .seg button{flex:1;background:var(--panel2);color:var(--dim)}
-  .seg button[aria-selected="true"]{background:var(--key);color:#fff;font-weight:650}
+  .seg button[aria-selected="true"]{background:var(--key);color:var(--onkey);font-weight:650}
   .add{display:flex;gap:6px}
   .add input{flex:1;min-width:0;font-size:14px}
-  .add button{background:var(--key);color:#fff;font-weight:650;padding:8px 13px}
+  .add button{background:var(--key);color:var(--onkey);font-weight:650;padding:8px 13px}
   .snips{display:flex;gap:5px;overflow-x:auto;padding:7px 0 2px;scrollbar-width:none}
   .snips::-webkit-scrollbar{display:none}
   .snips button{flex:none;background:var(--panel2);color:var(--ink);font-size:13px;padding:6px 11px}
@@ -130,7 +144,7 @@
   li:first-child{border-top:0}
   .tick{flex:none;width:23px;height:23px;margin-top:1px;border:1.5px solid var(--faint);border-radius:6px;
     background:transparent;padding:0;display:grid;place-items:center;color:transparent;font-size:13px}
-  li.done .tick{background:var(--done);border-color:var(--done);color:#fff}
+  li.done .tick{background:var(--done);border-color:var(--done);color:var(--ondisp)}
   .star{flex:none;background:transparent;padding:2px 3px;font-size:16px;color:var(--faint);line-height:1}
   .star.on{color:var(--signal)}
   .txt{flex:1;min-width:0;font-size:14.5px;word-break:break-word}
@@ -152,8 +166,8 @@
   .prog{font-size:13px;color:var(--dim);text-align:center;font-variant-numeric:tabular-nums}
   .cap textarea{font-size:12px;height:58px;resize:none}
   .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0));transform:translateX(-50%);
-    background:var(--ink);color:#fff;padding:10px 16px;border-radius:22px;font-size:13.5px;
-    z-index:70;max-width:88vw;text-align:center;box-shadow:0 4px 18px rgba(80,60,40,.3)}
+    background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:22px;font-size:13.5px;
+    z-index:70;max-width:88vw;text-align:center;box-shadow:0 4px 18px var(--shadow)}
   @media (prefers-reduced-motion:reduce){button:active{transform:none}}
 </style>
 </head>
@@ -166,6 +180,7 @@
       <button id="mList" aria-pressed="true">清單</button>
       <button id="mBlock" aria-pressed="false">區塊</button>
     </div>
+    <button class="theme" id="theme" aria-label="切換日夜模式">☾</button>
     <span class="stamp num" id="stamp"></span>
   </div>
   <div class="hrow">
@@ -217,7 +232,15 @@
   let state = load();
   let view = state.view || 'list';
   let zone = state.zone || '';
-  let query = '', openChart = null, tab = {};
+  let theme = state.theme || (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  let query = '', openChart = null, tab = {}, dispCustom = false;
+
+  function applyTheme() {
+    document.documentElement.dataset.theme = theme;
+    $('theme').textContent = theme === 'dark' ? '☀' : '☾';
+    document.querySelector('meta[name="theme-color"]')
+      ?.setAttribute('content', theme === 'dark' ? '#1b1411' : '#faf6f0');
+  }
 
   function load() {
     for (const key of [KEY, OLD]) {
@@ -229,7 +252,7 @@
     return {updatedAt: 0, order: [], patients: {}, view: 'list', zone: '', use: {}};
   }
   function save() {
-    state.view = view; state.zone = zone;
+    state.view = view; state.zone = zone; state.theme = theme;
     try { localStorage.setItem(KEY, JSON.stringify(state)); }
     catch (error) { toast('儲存失敗，裝置空間可能不足'); }
   }
@@ -264,6 +287,7 @@
   /* ---- search ----------------------------------------------------------- */
   function haystack(p) {
     return [p.bed, p.name, p.chart, dispOf(p), p.oa, p.age, p.sex, p.dept, p.ccTitle, p.cc,
+      p.bedWait ? '床 待床' : '',
       ...p.notes.map(n => n.text), ...p.todos.map(t => t.text)]
       .filter(Boolean).join(' ').toLowerCase();
   }
@@ -475,7 +499,8 @@
     mid.innerHTML =
       `<div class="rtop"><span class="rname">${esc(patient.name || '未命名')}</span>` +
       `<span class="chip disp" data-blank="${disposition ? 0 : 1}">${esc(disposition || '—')}</span>` +
-      (patient.dept ? `<span class="chip dept">${esc(patient.dept)}</span>` : '') + `</div>` +
+      (patient.dept ? `<span class="chip dept">${esc(patient.dept)}</span>` : '') +
+      (patient.bedWait ? '<span class="chip bedwait">床</span>' : '') + `</div>` +
       `<div class="rsub num">${esc(patient.chart)}　${esc(patient.age || '')}${esc(patient.sex || '')}</div>` +
       ((patient.ccTitle || patient.cc)
         ? `<div class="rcc">${esc([patient.ccTitle, patient.cc].filter(Boolean).join('・'))}</div>` : '');
@@ -574,12 +599,11 @@
     const open = openTodos(patient);
     node.innerHTML =
       `<div class="ctop"><span class="cbed num">${esc(patient.bed || '—')}</span>` +
+      (patient.bedWait ? '<span class="cwait">床</span>' : '') +
       `<span class="cdisp">${esc(dispOf(patient))}</span></div>` +
       `<div class="cname">${esc(patient.name || '未命名')}</div>` +
       `<div class="cmid"><span>${esc(patient.dept || '')}</span>` +
-      (open ? `<span class="ctodo ${urgency(patient)}">☑${open}</span>` : '') + `</div>` +
-      (patient.ccTitle || patient.cc
-        ? `<div class="ccc">${esc([patient.ccTitle, patient.cc].filter(Boolean).join('・'))}</div>` : '');
+      (open ? `<span class="ctodo ${urgency(patient)}">☑${open}</span>` : '') + `</div>`;
     node.addEventListener('click', () => openDetail(patient.chart));
     node.addEventListener('keydown', e => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(patient.chart); }
@@ -588,7 +612,7 @@
   }
 
   /* ---- detail page ------------------------------------------------------ */
-  function openDetail(chart) { openChart = chart; drawDetail(); }
+  function openDetail(chart) { openChart = chart; dispCustom = false; drawDetail(); }
   function closeDetail() {
     openChart = null;
     $('detail').classList.remove('on');
@@ -640,26 +664,49 @@
     const name = document.createElement('span');
     name.className = 'pname';
     name.textContent = patient.name || '未命名';
-    const disp = document.createElement('input');
+    row1.append(bed, name);
+
+    // One control, cycled: blank → O → A → 自訂 → O … The custom field only appears on
+    // the 自訂 step, so the common case is a single tap with nothing to type.
+    const current = dispOf(patient);
+    const custom = dispCustom || (!!current && !['O', 'A'].includes(current.toUpperCase()));
+    const disp = document.createElement('button');
     disp.className = 'pdisp';
-    disp.value = dispOf(patient);
-    disp.placeholder = 'O/A';
-    disp.maxLength = 6;
-    disp.dataset.blank = dispOf(patient) ? '0' : '1';
-    disp.setAttribute('aria-label', '處置');
-    disp.onchange = () => { patient.oaUser = disp.value.trim(); save(); drawDetail(); };
-    row1.append(bed, name, disp);
+    disp.dataset.blank = current ? '0' : '1';
+    disp.textContent = custom ? (current || '自訂') : (current || '—');
+    disp.title = '點一下循環：O → A → 自訂';
+    disp.setAttribute('aria-label', '處置：' + (current || '未設定'));
+    disp.onclick = () => {
+      const now = dispOf(patient).trim().toUpperCase();
+      if (now === 'O') { patient.oaUser = 'A'; dispCustom = false; }
+      else if (now === 'A') { patient.oaUser = ''; dispCustom = true; }
+      else { patient.oaUser = 'O'; dispCustom = false; }
+      save(); drawDetail();
+    };
+    row1.append(disp);
+
+    if (custom) {
+      const free = document.createElement('input');
+      free.className = 'pfree';
+      free.value = current;
+      free.placeholder = '自訂';
+      free.maxLength = 6;
+      free.setAttribute('aria-label', '自訂處置');
+      free.onchange = () => { patient.oaUser = free.value.trim(); dispCustom = false; save(); drawDetail(); };
+      row1.append(free);
+      if (dispCustom) setTimeout(() => free.focus(), 0);
+    }
+
+    // Waiting-for-a-bed is the user's own flag, so a re-scan never clears it.
+    const bedWait = document.createElement('button');
+    bedWait.className = 'pbedwait';
+    bedWait.textContent = '床';
+    bedWait.setAttribute('aria-pressed', String(!!patient.bedWait));
+    bedWait.setAttribute('aria-label', '待床');
+    bedWait.onclick = () => { patient.bedWait = !patient.bedWait; save(); drawDetail(); };
+    row1.append(bedWait);
 
     const overridden = patient.oaUser !== undefined && patient.oaUser !== patient.oa;
-    if (overridden) {
-      const undo = document.createElement('button');
-      undo.className = 'undo';
-      undo.textContent = '↺';
-      undo.title = `還原系統值「${patient.oa || '空白'}」`;
-      undo.setAttribute('aria-label', '還原處置');
-      undo.onclick = () => { delete patient.oaUser; save(); drawDetail(); };
-      row1.append(undo);
-    }
 
     const row2 = document.createElement('div');
     row2.className = 'prow2 num';
@@ -845,6 +892,7 @@
   }
 
   /* ---- wiring ----------------------------------------------------------- */
+  $('theme').onclick = () => { theme = theme === 'dark' ? 'light' : 'dark'; applyTheme(); save(); };
   $('mList').onclick = () => { view = 'list'; save(); render(); };
   $('mBlock').onclick = () => { view = 'block'; save(); render(); };
   $('q').addEventListener('input', e => { query = e.target.value; render(); });
@@ -864,6 +912,7 @@
     if (openChart) closeDetail(); else if (stream) stopScan();
   });
   document.addEventListener('visibilitychange', () => { if (document.hidden && stream) stopScan(); });
+  applyTheme();
   render();
 })();
 </script>
