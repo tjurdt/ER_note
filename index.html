@@ -8,109 +8,154 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>急診清單</title>
 <style>
-  /* An ED tracking board, not a card deck: full-bleed rows, aligned number
-     columns, one amber signal colour for "needs attention". Dark by default
-     because this is read on a night shift. */
+  /* An ED tracking board: dense rows, aligned bed numbers, disposition carried as edge
+     colour the way a physical board uses magnets. Dark by default for night shifts. */
   :root{
     --bg:#0b1014; --panel:#141b21; --panel2:#1b242b; --line:#263138;
     --ink:#e7eef2; --dim:#8da3af; --faint:#5e7380;
-    --signal:#f2a93b; --done:#3f8f7a; --alert:#d9544d; --key:#4fb3c7;
-    --pad:14px;
+    --signal:#f2a93b; --done:#3f8f7a; --alert:#d9544d; --key:#4fb3c7; --other:#5a93dc;
+    --pad:12px; --rowh:max(94px,16vh);
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-  html,body{margin:0;background:var(--bg);color:var(--ink)}
+  html,body{margin:0;background:var(--bg);color:var(--ink);overscroll-behavior-y:contain}
   body{font:15px/1.5 -apple-system,"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
     padding-top:env(safe-area-inset-top,0);padding-bottom:env(safe-area-inset-bottom,0)}
   .num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+  button{font:inherit;border:0;border-radius:8px;cursor:pointer;color:var(--ink);background:var(--panel2);padding:7px 10px;font-size:13px}
+  button:active{transform:scale(.98)}
+  input,textarea{font:inherit;background:var(--bg);border:1px solid var(--line);border-radius:8px;
+    color:var(--ink);padding:8px 10px}
+  input:focus,textarea:focus{outline:2px solid var(--key);outline-offset:-1px}
+
+  /* disposition colour: A red, O amber, any other letter blue, blank neutral */
+  [data-d="A"]{--disp:var(--alert)} [data-d="O"]{--disp:var(--signal)}
+  [data-d="X"]{--disp:var(--other)} [data-d=""]{--disp:var(--line)}
 
   header{position:sticky;top:env(safe-area-inset-top,0);z-index:20;background:var(--bg);
-    border-bottom:1px solid var(--line);padding:10px var(--pad) 8px}
-  .htop{display:flex;align-items:baseline;gap:10px}
-  h1{margin:0;font-size:17px;font-weight:650;letter-spacing:.01em}
-  .stamp{font-size:11.5px;color:var(--faint);margin-left:auto}
-  .hbar{display:flex;gap:7px;margin-top:9px}
-  button{font:inherit;border:0;border-radius:8px;cursor:pointer;color:var(--ink);background:var(--panel2);
-    padding:8px 11px;font-size:13.5px}
-  button.go{background:var(--key);color:#06222a;font-weight:650;flex:1}
-  button.q{background:transparent;color:var(--dim);padding:8px 6px}
-  button:active{transform:scale(.98)}
-  .sortsel{background:var(--panel2);color:var(--dim);border:0;border-radius:8px;padding:8px;font:inherit;font-size:13px}
+    border-bottom:1px solid var(--line);padding:8px var(--pad)}
+  .htop{display:flex;align-items:center;gap:8px}
+  h1{margin:0;font-size:16px;font-weight:650;white-space:nowrap}
+  .stamp{font-size:11px;color:var(--faint);margin-left:auto;text-align:right;line-height:1.3}
+  .hrow{display:flex;gap:6px;margin-top:7px;align-items:center}
+  #q{flex:1;min-width:0;padding:7px 10px;font-size:14px}
+  .modes{display:flex;background:var(--panel2);border-radius:8px;padding:2px;gap:2px}
+  .modes button{background:transparent;color:var(--dim);padding:5px 9px;font-size:12.5px}
+  .modes button[aria-pressed="true"]{background:var(--key);color:#06222a;font-weight:650}
+  .zones{display:flex;gap:5px;overflow-x:auto;margin-top:7px;scrollbar-width:none}
+  .zones::-webkit-scrollbar{display:none}
+  .zones button{flex:none;background:var(--panel2);color:var(--dim);padding:5px 11px;font-size:12.5px}
+  .zones button[aria-pressed="true"]{background:var(--ink);color:var(--bg);font-weight:650}
 
-  .board{padding-bottom:40px}
-  .pt{border-bottom:1px solid var(--line);position:relative}
-  .pt::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:transparent}
-  .pt[data-flag="1"]::before{background:var(--signal)}
-  .pt[data-flag="2"]::before{background:var(--alert)}
-  .head{display:grid;grid-template-columns:62px 1fr auto;gap:10px;align-items:start;
-    padding:11px var(--pad) 11px calc(var(--pad) - 3px);cursor:pointer}
-  .bed{font-size:19px;font-weight:700;line-height:1.15;color:var(--ink);word-break:break-all}
-  .oa{font-size:11px;color:var(--faint);font-weight:600}
-  .who{min-width:0}
-  .nm{font-size:15.5px;font-weight:600}
-  .sub{font-size:12px;color:var(--dim);margin-top:1px}
-  .cc{font-size:13px;color:var(--ink);margin-top:5px;opacity:.92}
-  .ccb{font-size:12.5px;color:var(--dim);margin-top:2px;
-    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-  .pt.open .ccb{-webkit-line-clamp:unset;overflow:visible}
-  .tally{display:flex;flex-direction:column;align-items:flex-end;gap:3px;font-size:11.5px;color:var(--faint)}
-  .pill{background:var(--panel2);border-radius:20px;padding:2px 8px;font-weight:650}
+  /* ---- list mode ---- */
+  .row{display:grid;grid-template-columns:52px 1fr auto;gap:9px;align-items:center;
+    padding:7px var(--pad) 7px calc(var(--pad) - 3px);border-bottom:1px solid var(--line);
+    border-left:3px solid var(--disp,var(--line));cursor:pointer}
+  .row[data-d="A"],.row[data-d="O"],.row[data-d="X"]{box-shadow:inset 7px 0 10px -8px var(--disp)}
+  .rbed{font-size:17px;font-weight:700;line-height:1.1;word-break:break-all}
+  .rmid{min-width:0}
+  .rtop{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap}
+  .rname{font-size:15.5px;font-weight:600}
+  .chip{font-size:11.5px;font-weight:700;padding:1px 7px;border-radius:5px;line-height:1.5;white-space:nowrap}
+  .chip.disp{background:var(--disp);color:#0b1014}
+  .chip.disp[data-blank="1"]{background:var(--panel2);color:var(--faint)}
+  .chip.dept{background:var(--panel2);color:var(--ink)}
+  .rsub{font-size:11.5px;color:var(--faint);margin-top:1px}
+  .rcc{font-size:12px;color:var(--dim);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .rtal{display:flex;flex-direction:column;align-items:flex-end;gap:2px}
+
+  /* ---- block mode ---- */
+  .zone h2{margin:12px var(--pad) 6px;font-size:11px;letter-spacing:.08em;color:var(--faint);font-weight:650}
+  .grid{display:grid;grid-template-columns:repeat(5,1fr);gap:5px;padding:0 var(--pad)}
+  .cell{height:var(--rowh);border-radius:9px;background:var(--panel);padding:5px 5px 4px;overflow:hidden;
+    display:flex;flex-direction:column;cursor:pointer;border:1.5px solid var(--disp,var(--line))}
+  .cell[data-d="A"],.cell[data-d="O"],.cell[data-d="X"]{box-shadow:0 0 9px -2px var(--disp),inset 0 0 14px -10px var(--disp)}
+  .cell.hole{background:transparent;border:1px dashed var(--line);opacity:.3;cursor:default}
+  .ctop{display:flex;align-items:center;gap:3px}
+  .cbed{font-size:10px;color:var(--faint);font-weight:650;line-height:1}
+  .cdisp{margin-left:auto;font-size:10.5px;font-weight:800;color:var(--disp);line-height:1}
+  .cname{font-size:15px;font-weight:700;line-height:1.15;margin-top:3px;word-break:break-all}
+  .cmid{display:flex;align-items:center;gap:4px;margin-top:2px;font-size:11px;color:var(--dim)}
+  .ctodo{margin-left:auto;font-weight:700;color:var(--faint);white-space:nowrap}
+  .ctodo.on{color:var(--signal)} .ctodo.hot{color:var(--alert)}
+  .ccc{font-size:9.5px;line-height:1.3;color:var(--faint);margin-top:2px;overflow:hidden;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  @media (min-width:620px){:root{--rowh:max(118px,18vh)} .cname{font-size:18px} .ccc{font-size:11px}}
+
+  .pill{background:var(--panel2);border-radius:20px;padding:1px 8px;font-size:11.5px;font-weight:650;color:var(--dim)}
   .pill.on{background:var(--signal);color:#2a1a00}
-  .pill.note{color:var(--dim)}
+  .pill.hot{background:var(--alert);color:#2a0b08}
 
-  .body{display:none;padding:0 var(--pad) 14px calc(var(--pad) - 3px);background:var(--panel)}
-  .pt.open .body{display:block}
-  .seg{display:flex;gap:6px;padding:10px 0 8px}
-  .seg button{flex:1;background:var(--panel2);color:var(--dim);font-size:13px}
+  .blank{padding:46px var(--pad);text-align:center;color:var(--dim)}
+  .blank b{display:block;color:var(--ink);font-size:16px;margin-bottom:6px}
+  .gone{border-top:1px solid var(--line);margin-top:10px}
+  .gone>summary{padding:12px var(--pad);color:var(--faint);font-size:13px;cursor:pointer;list-style:none}
+  .gone>summary::-webkit-details-marker{display:none}
+  .gone .row{opacity:.5}
+
+  /* ---- full-screen detail ---- */
+  .page{position:fixed;inset:0;z-index:50;background:var(--bg);display:none;flex-direction:column;
+    padding-top:env(safe-area-inset-top,0);padding-bottom:env(safe-area-inset-bottom,0)}
+  .page.on{display:flex}
+  .phead{display:flex;gap:10px;align-items:flex-start;padding:10px var(--pad);border-bottom:1px solid var(--line);
+    border-left:4px solid var(--disp,var(--line))}
+  .phead .x{margin-left:auto;background:transparent;color:var(--dim);font-size:21px;line-height:1;padding:2px 6px}
+  .pbed{font-size:20px;font-weight:700}
+  .pname{font-size:19px;font-weight:650}
+  .pmeta{font-size:12px;color:var(--faint);margin-top:2px}
+  .pbody{flex:1;overflow:auto;padding:0 var(--pad) 24px}
+  .sect{margin-top:12px}
+  .lab{font-size:10.5px;letter-spacing:.06em;color:var(--faint);font-weight:650;margin-bottom:5px}
+  .dispedit{display:flex;gap:5px;flex-wrap:wrap;align-items:center}
+  .dispedit button{min-width:42px;font-weight:700}
+  .dispedit button[aria-pressed="true"]{background:var(--disp);color:#0b1014}
+  .dispedit input{width:76px;padding:6px 8px;font-size:13px}
+  .note{font-size:11px;color:var(--faint);margin-top:5px}
+  .ccbox{background:var(--panel);border-radius:9px;padding:9px 11px;font-size:13.5px}
+  .ccbox b{display:block;font-size:14.5px;margin-bottom:3px}
+  .seg{display:flex;gap:6px;margin:12px 0 8px}
+  .seg button{flex:1;background:var(--panel2);color:var(--dim)}
   .seg button[aria-selected="true"]{background:var(--key);color:#06222a;font-weight:650}
-  .add{display:flex;gap:6px;margin-bottom:9px}
-  .add input{flex:1;min-width:0;background:var(--bg);border:1px solid var(--line);border-radius:8px;
-    color:var(--ink);padding:9px 10px;font:inherit;font-size:14px}
-  .add input:focus{outline:2px solid var(--key);outline-offset:-1px}
-  .add button{background:var(--key);color:#06222a;font-weight:650;padding:9px 13px}
-
+  .add{display:flex;gap:6px}
+  .add input{flex:1;min-width:0;font-size:14px}
+  .add button{background:var(--key);color:#06222a;font-weight:650;padding:8px 13px}
+  .snips{display:flex;gap:5px;overflow-x:auto;padding:7px 0 2px;scrollbar-width:none}
+  .snips::-webkit-scrollbar{display:none}
+  .snips button{flex:none;background:var(--panel2);color:var(--ink);font-size:13px;padding:6px 11px}
   ul{list-style:none;margin:0;padding:0}
-  li{display:flex;gap:9px;align-items:flex-start;padding:8px 0;border-top:1px solid var(--line)}
+  li{display:flex;gap:9px;align-items:flex-start;padding:9px 0;border-top:1px solid var(--line)}
   li:first-child{border-top:0}
-  .tick{flex:none;width:22px;height:22px;margin-top:1px;border:1.5px solid var(--faint);border-radius:6px;
+  .tick{flex:none;width:23px;height:23px;margin-top:1px;border:1.5px solid var(--faint);border-radius:6px;
     background:transparent;padding:0;display:grid;place-items:center;color:transparent;font-size:13px}
   li.done .tick{background:var(--done);border-color:var(--done);color:#04231c}
-  .star{flex:none;background:transparent;padding:2px 3px;font-size:15px;color:var(--faint);line-height:1}
+  .star{flex:none;background:transparent;padding:2px 3px;font-size:16px;color:var(--faint);line-height:1}
   .star.on{color:var(--signal)}
-  .txt{flex:1;min-width:0;font-size:14px;word-break:break-word}
+  .txt{flex:1;min-width:0;font-size:14.5px;word-break:break-word}
   li.done .txt{color:var(--faint);text-decoration:line-through}
   li.imp .txt{color:var(--signal)}
   .when{font-size:10.5px;color:var(--faint);margin-top:2px}
-  .kill{flex:none;background:transparent;color:var(--faint);padding:2px 4px;font-size:15px;line-height:1}
-  .empty{color:var(--faint);font-size:12.5px;padding:8px 0}
-  details.fin{margin-top:8px}
-  details.fin summary{color:var(--faint);font-size:12.5px;cursor:pointer;padding:6px 0;list-style:none}
+  .kill{flex:none;background:transparent;color:var(--faint);padding:2px 5px;font-size:16px;line-height:1}
+  .empty{color:var(--faint);font-size:12.5px;padding:9px 0}
+  details.fin summary{color:var(--faint);font-size:12.5px;cursor:pointer;padding:7px 0;list-style:none}
   details.fin summary::-webkit-details-marker{display:none}
   details.fin summary::before{content:"▸ ";font-size:10px}
   details.fin[open] summary::before{content:"▾ "}
 
-  .gone{margin:0;border-top:1px solid var(--line)}
-  .gone summary{padding:12px var(--pad);color:var(--faint);font-size:13px;cursor:pointer;list-style:none}
-  .gone summary::-webkit-details-marker{display:none}
-  .gone .pt{opacity:.55}
-
-  .blank{padding:48px var(--pad);text-align:center;color:var(--dim)}
-  .blank b{display:block;color:var(--ink);font-size:16px;margin-bottom:6px;font-weight:650}
-
-  .sheet{position:fixed;inset:0;z-index:40;background:#000;display:none;flex-direction:column}
+  .sheet{position:fixed;inset:0;z-index:60;background:#000;display:none;flex-direction:column}
   .sheet.on{display:flex}
   .sheet video{flex:1;width:100%;object-fit:cover;background:#000}
-  .sheet .cap{padding:12px var(--pad) calc(12px + env(safe-area-inset-bottom,0));background:var(--panel);
+  .cap{padding:12px var(--pad) calc(12px + env(safe-area-inset-bottom,0));background:var(--panel);
     display:flex;flex-direction:column;gap:9px}
   .prog{font-size:13px;color:var(--dim);text-align:center;font-variant-numeric:tabular-nums}
-  .sheet textarea{background:var(--bg);border:1px solid var(--line);border-radius:8px;color:var(--ink);
-    padding:9px;font:inherit;font-size:12px;height:62px;resize:none}
-  .toast{position:fixed;left:50%;bottom:calc(22px + env(safe-area-inset-bottom,0));transform:translateX(-50%);
+  .cap textarea{font-size:12px;height:58px;resize:none}
+  .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0));transform:translateX(-50%);
     background:var(--panel2);color:var(--ink);padding:10px 16px;border-radius:22px;font-size:13.5px;
-    z-index:60;max-width:88vw;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.5)}
+    z-index:70;max-width:88vw;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.5)}
   @media (prefers-color-scheme:light){
-    :root{--bg:#f6f8f9;--panel:#fff;--panel2:#e7edf0;--line:#d6e0e5;--ink:#131c22;--dim:#52646e;--faint:#7b8d97;
-      --key:#0f6b7d}
-    button.go,.seg button[aria-selected="true"],.add button{color:#fff}
+    :root{--bg:#f6f8f9;--panel:#fff;--panel2:#e7edf0;--line:#d2dde3;--ink:#131c22;--dim:#52646e;--faint:#7b8d97;
+      --key:#0f6b7d;--other:#2f6fb5}
+    .modes button[aria-pressed="true"],.seg button[aria-selected="true"],.add button{color:#fff}
+    .chip.disp,.dispedit button[aria-pressed="true"]{color:#fff}
+    .zones button[aria-pressed="true"]{color:#fff;background:#131c22}
     .tick{border-color:#9aa9b2}
   }
   @media (prefers-reduced-motion:reduce){button:active{transform:none}}
@@ -121,20 +166,22 @@
 <header>
   <div class="htop">
     <h1>急診清單</h1>
+    <div class="modes">
+      <button id="mList" aria-pressed="true">清單</button>
+      <button id="mBlock" aria-pressed="false">區塊</button>
+    </div>
     <span class="stamp num" id="stamp"></span>
   </div>
-  <div class="hbar">
-    <button class="go" id="scan">掃描 QR 更新清單</button>
-    <select class="sortsel" id="sort" aria-label="排序">
-      <option value="bed">依床位</option>
-      <option value="todo">依待辦</option>
-      <option value="dept">依科別</option>
-    </select>
-    <button class="q" id="paste" title="貼上文字備援">貼上</button>
+  <div class="hrow">
+    <input id="q" type="search" placeholder="搜尋：姓名、床號、科別、筆記、待辦…" autocomplete="off">
+    <button id="scan">掃描</button>
+    <button id="paste" title="文字備援">貼上</button>
   </div>
+  <div class="zones" id="zones" hidden></div>
 </header>
 
-<main id="board" class="board"></main>
+<main id="board"></main>
+<div class="page" id="detail"></div>
 
 <div class="sheet" id="sheet">
   <video id="cam" playsinline muted></video>
@@ -153,7 +200,7 @@
 <script>
 (function () {
   'use strict';
-  const KEY = 'edlist:v1';
+  const KEY = 'edlist:v2', OLD = 'edlist:v1';
   const $ = id => document.getElementById(id);
   const pad = n => String(n).padStart(2, '0');
   const clock = ms => {
@@ -163,24 +210,32 @@
   };
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const SYS = ['bed', 'name', 'oa', 'age', 'sex', 'dept', 'ccTitle', 'cc'];
+  const esc = v => String(v === null || v === undefined ? '' : v)
+    .replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+
+  // Common ED orders, offered as one-tap completions while typing a todo.
+  const SNIPPETS = ['開NS', 'On Foley', 'On NG', '四寶', '開血單', '追報告', '照CXR', '排CT', '追CT',
+    '心電圖', '抽ABG', '驗尿', '血糖', '給氧', '輸血', '打止痛', '退燒', '止吐', '抗生素',
+    '收住院', '會診', '聯絡家屬', '解釋病情', '簽同意書', '轉床', '拔針', '辦出院'];
 
   let state = load();
-  let openChart = null, tab = {};
+  let view = state.view || 'list';
+  let zone = state.zone || '';
+  let query = '', openChart = null, tab = {};
 
   function load() {
-    try {
-      const raw = JSON.parse(localStorage.getItem(KEY));
-      if (raw && raw.patients) return raw;
-    } catch (error) { /* corrupt or absent: start clean rather than fail to open */ }
-    return {updatedAt: 0, order: [], patients: {}};
+    for (const key of [KEY, OLD]) {
+      try {
+        const raw = JSON.parse(localStorage.getItem(key));
+        if (raw && raw.patients) return Object.assign({updatedAt: 0, order: [], view: 'list', zone: '', use: {}}, raw);
+      } catch (error) { /* try the older key, then start clean rather than fail to open */ }
+    }
+    return {updatedAt: 0, order: [], patients: {}, view: 'list', zone: '', use: {}};
   }
   function save() {
-    state.patients = state.patients || {};
-    try {
-      localStorage.setItem(KEY, JSON.stringify(state));
-    } catch (error) {
-      toast('儲存失敗，裝置空間可能不足');
-    }
+    state.view = view; state.zone = zone;
+    try { localStorage.setItem(KEY, JSON.stringify(state)); }
+    catch (error) { toast('儲存失敗，裝置空間可能不足'); }
   }
   function toast(message) {
     document.querySelector('.toast')?.remove();
@@ -191,25 +246,52 @@
     setTimeout(() => node.remove(), 2600);
   }
 
-  /* ---- merge -------------------------------------------------------------
-     Chart number is the only identity. A bed move is just a field update, so
-     notes and todos stay with the patient. Someone who drops off the list is
-     moved out of the board but kept, because deleting their notes outright is
-     not recoverable and a patient can reappear after a transfer.          */
+  /* ---- disposition ------------------------------------------------------
+     The scanned value is authoritative, but the user may override it on the
+     phone. The override lives in its own field so a re-scan never silently
+     discards it and the system value stays available for comparison.     */
+  const dispOf = p => (p.oaUser !== undefined && p.oaUser !== null ? p.oaUser : p.oa) || '';
+  const dispClass = value => {
+    const letter = String(value || '').trim().toUpperCase().charAt(0);
+    if (!letter) return '';
+    return letter === 'A' ? 'A' : letter === 'O' ? 'O' : 'X';
+  };
+
+  /* ---- bed numbers ------------------------------------------------------ */
+  function bedParts(bed) {
+    const match = String(bed || '').trim().toUpperCase().match(/^([A-Z]*)[\s-]*(\d+)(.*)$/);
+    if (!match) return {zone: String(bed || '').trim().toUpperCase() || '其他', n: null};
+    return {zone: match[1] || '其他', n: Number(match[2])};
+  }
+  const bedKey = bed => String(bed || '').replace(/\d+/g, d => d.padStart(6, '0'));
+
+  /* ---- search ----------------------------------------------------------- */
+  function haystack(p) {
+    return [p.bed, p.name, p.chart, dispOf(p), p.oa, p.age, p.sex, p.dept, p.ccTitle, p.cc,
+      ...p.notes.map(n => n.text), ...p.todos.map(t => t.text)]
+      .filter(Boolean).join(' ').toLowerCase();
+  }
+  function matches(patient) {
+    const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (!terms.length) return true;
+    const hay = haystack(patient);
+    return terms.every(term => hay.includes(term));
+  }
+
+  /* ---- merge ------------------------------------------------------------ */
   function merge(incoming) {
     const seen = new Set();
     let added = 0, updated = 0, moved = 0;
     for (const row of incoming) {
-      const chart = row.chart;
-      seen.add(chart);
-      const existing = state.patients[chart];
+      seen.add(row.chart);
+      const existing = state.patients[row.chart];
       if (existing) {
         if (existing.bed && row.bed && existing.bed !== row.bed) moved += 1;
         for (const field of SYS) existing[field] = row[field];
-        if (existing.left) {existing.left = false; delete existing.leftAt;}
+        if (existing.left) { existing.left = false; delete existing.leftAt; }
         updated += 1;
       } else {
-        state.patients[chart] = Object.assign({chart, notes: [], todos: [], left: false}, row);
+        state.patients[row.chart] = Object.assign({chart: row.chart, notes: [], todos: [], left: false}, row);
         added += 1;
       }
     }
@@ -217,14 +299,11 @@
     for (const chart of Object.keys(state.patients)) {
       const patient = state.patients[chart];
       if (seen.has(chart) || patient.left) continue;
-      patient.left = true;
-      patient.leftAt = Date.now();
-      departed += 1;
+      patient.left = true; patient.leftAt = Date.now(); departed += 1;
     }
     state.order = incoming.map(row => row.chart);
     state.updatedAt = Date.now();
-    save();
-    render();
+    save(); render();
     const parts = [];
     if (added) parts.push(`新增 ${added}`);
     if (updated) parts.push(`更新 ${updated}`);
@@ -233,7 +312,7 @@
     toast(parts.length ? parts.join('・') : '清單沒有變動');
   }
 
-  /* ---- decode ---------------------------------------------------------- */
+  /* ---- decode ----------------------------------------------------------- */
   async function inflate(bytes) {
     const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
     return new Uint8Array(await new Response(stream).arrayBuffer());
@@ -241,12 +320,11 @@
   async function toPatients(body) {
     const parsed = JSON.parse(new TextDecoder().decode(await inflate(body)));
     if (!parsed || parsed.v !== 1 || !Array.isArray(parsed.p)) throw new Error('格式不符');
-    return parsed.p.map(row => ({
-      bed: row[0] || '', name: row[1] || '', chart: row[2] || '', oa: row[3] || '',
-      age: row[4] || '', sex: row[5] || '', dept: row[6] || '', ccTitle: row[7] || '', cc: row[8] || ''
-    })).filter(row => row.chart);
+    return parsed.p.map(r => ({bed: r[0] || '', name: r[1] || '', chart: r[2] || '', oa: r[3] || '',
+      age: r[4] || '', sex: r[5] || '', dept: r[6] || '', ccTitle: r[7] || '', cc: r[8] || ''}))
+      .filter(r => r.chart);
   }
-  function importBase64(input) {
+  function fromBase64(input) {
     const trimmed = String(input || '').trim().replace(/^EDQ1:/, '');
     if (!trimmed) throw new Error('沒有內容');
     const binary = atob(trimmed);
@@ -257,19 +335,12 @@
 
   /* ---- scanner ---------------------------------------------------------- */
   const sheet = $('sheet'), video = $('cam'), prog = $('prog');
-  let stream = null, raf = 0, canvas = null, ctx = null;
-  let bag = null; // {sid, total, parts:[]}
+  let stream = null, raf = 0, canvas = null, ctx = null, bag = null;
 
   async function startScan() {
-    bag = null;
-    prog.textContent = '對準 QR';
-    sheet.classList.add('on');
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: 'environment'}});
-    } catch (error) {
-      prog.textContent = '無法開啟相機，請改用下方貼上';
-      return;
-    }
+    bag = null; prog.textContent = '對準 QR'; sheet.classList.add('on');
+    try { stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: 'environment'}}); }
+    catch (error) { prog.textContent = '無法開啟相機，請改用下方貼上'; return; }
     video.srcObject = stream;
     await video.play().catch(() => {});
     canvas = canvas || document.createElement('canvas');
@@ -278,10 +349,8 @@
   }
   function stopScan() {
     cancelAnimationFrame(raf);
-    stream?.getTracks().forEach(track => track.stop());
-    stream = null;
-    video.srcObject = null;
-    sheet.classList.remove('on');
+    stream?.getTracks().forEach(t => t.stop());
+    stream = null; video.srcObject = null; sheet.classList.remove('on');
   }
   function loop() {
     raf = requestAnimationFrame(loop);
@@ -296,170 +365,342 @@
   }
   function accept(bytes) {
     if (bytes.length < 9 || bytes[0] !== 0x45 || bytes[1] !== 0x44 || bytes[2] !== 0x51 || bytes[3] !== 1) {
-      prog.textContent = '這不是本工具的 QR';
-      return;
+      prog.textContent = '這不是本工具的 QR'; return;
     }
     const sid = bytes[4] | (bytes[5] << 8), index = bytes[6], total = bytes[7];
     if (!bag || bag.sid !== sid || bag.total !== total) bag = {sid, total, parts: new Array(total)};
-    if (!bag.parts[index]) {
-      bag.parts[index] = bytes.subarray(8);
-      if (navigator.vibrate) navigator.vibrate(30);
-    }
+    if (!bag.parts[index]) { bag.parts[index] = bytes.subarray(8); navigator.vibrate?.(30); }
     const have = bag.parts.filter(Boolean).length;
     prog.textContent = total > 1 ? `已收 ${have} / ${total} 張` : '已讀取，正在匯入';
     if (have < total) return;
-    const body = new Uint8Array(bag.parts.reduce((sum, part) => sum + part.length, 0));
+    const body = new Uint8Array(bag.parts.reduce((s, p) => s + p.length, 0));
     let at = 0;
-    for (const part of bag.parts) {body.set(part, at); at += part.length;}
+    for (const part of bag.parts) { body.set(part, at); at += part.length; }
     bag = null;
     finish(body);
   }
   async function finish(body) {
-    try {
-      const patients = await toPatients(body);
-      stopScan();
-      merge(patients);
-    } catch (error) {
-      prog.textContent = '解碼失敗：' + error.message;
-    }
+    try { const patients = await toPatients(body); stopScan(); merge(patients); }
+    catch (error) { prog.textContent = '解碼失敗：' + error.message; }
+  }
+
+  /* ---- shared ----------------------------------------------------------- */
+  const openTodos = p => p.todos.filter(t => !t.done).length;
+  function urgency(patient) {
+    if (patient.todos.some(t => !t.done && t.star)) return 'hot';
+    if (openTodos(patient) || patient.notes.some(n => n.important)) return 'on';
+    return '';
+  }
+  function sortPatients(list) {
+    const rank = new Map(state.order.map((chart, i) => [chart, i]));
+    return list.slice().sort((a, b) => bedKey(a.bed).localeCompare(bedKey(b.bed))
+      || (rank.get(a.chart) ?? 0) - (rank.get(b.chart) ?? 0));
   }
 
   /* ---- render ----------------------------------------------------------- */
-  function todoCount(patient) {return patient.todos.filter(item => !item.done).length;}
-  function flagOf(patient) {
-    if (patient.todos.some(item => !item.done && item.star)) return '2';
-    if (todoCount(patient) || patient.notes.some(note => note.important)) return '1';
-    return '0';
-  }
-  const bedKey = bed => String(bed || '').replace(/\d+/g, digits => digits.padStart(6, '0'));
-
-  function sorted(list) {
-    const mode = $('sort').value;
-    const rank = new Map(state.order.map((chart, i) => [chart, i]));
-    return list.slice().sort((a, b) => {
-      if (mode === 'todo') {
-        const diff = (flagOf(b) - flagOf(a)) || (todoCount(b) - todoCount(a));
-        if (diff) return diff;
-      }
-      if (mode === 'dept') {
-        const diff = String(a.dept).localeCompare(String(b.dept), 'zh-Hant');
-        if (diff) return diff;
-      }
-      const byBed = bedKey(a.bed).localeCompare(bedKey(b.bed));
-      if (byBed) return byBed;
-      return (rank.get(a.chart) ?? 0) - (rank.get(b.chart) ?? 0);
-    });
-  }
-
   function render() {
     const board = $('board');
     board.textContent = '';
-    const all = Object.values(state.patients);
-    const live = sorted(all.filter(patient => !patient.left));
-    const gone = all.filter(patient => patient.left).sort((a, b) => (b.leftAt || 0) - (a.leftAt || 0));
+    $('mList').setAttribute('aria-pressed', String(view === 'list'));
+    $('mBlock').setAttribute('aria-pressed', String(view === 'block'));
 
-    $('stamp').textContent = state.updatedAt
-      ? `${live.length} 人・更新 ${clock(state.updatedAt)}` : '';
+    const all = Object.values(state.patients);
+    const live = sortPatients(all.filter(p => !p.left));
+    const shown = live.filter(matches);
+    const gone = all.filter(p => p.left && matches(p)).sort((a, b) => (b.leftAt || 0) - (a.leftAt || 0));
+
+    $('stamp').innerHTML = state.updatedAt
+      ? `${shown.length}${shown.length !== live.length ? '/' + live.length : ''} 人<br>${clock(state.updatedAt)}`
+      : '';
+    renderZones(live);
 
     if (!all.length) {
-      const blank = document.createElement('div');
-      blank.className = 'blank';
-      blank.innerHTML = '<b>還沒有清單</b>在電腦上按「傳送到手機」，' +
-        '然後用上面的按鈕掃描 QR。掃完的清單會留在這支手機上。';
-      board.append(blank);
+      board.append(blankBox('還沒有清單', '在電腦上按「傳送到手機」，再用上面的「掃描」讀 QR。'));
       return;
     }
-    for (const patient of live) board.append(card(patient));
+    if (!shown.length && !gone.length) {
+      board.append(blankBox('沒有符合的病人', '試試別的關鍵字。'));
+      return;
+    }
+    board.append(view === 'block' ? blockView(shown) : listView(shown));
     if (gone.length) {
       const box = document.createElement('details');
       box.className = 'gone';
       const title = document.createElement('summary');
       title.textContent = `已離開清單 ${gone.length} 人（筆記保留）`;
       box.append(title);
-      for (const patient of gone) box.append(card(patient));
+      for (const patient of gone) box.append(listRow(patient));
       board.append(box);
     }
   }
+  function blankBox(title, body) {
+    const node = document.createElement('div');
+    node.className = 'blank';
+    node.innerHTML = `<b>${esc(title)}</b>${esc(body)}`;
+    return node;
+  }
 
-  function card(patient) {
-    const node = document.createElement('section');
-    node.className = 'pt' + (openChart === patient.chart ? ' open' : '');
-    node.dataset.flag = flagOf(patient);
+  function renderZones(live) {
+    const bar = $('zones');
+    if (view !== 'block') { bar.hidden = true; return; }
+    const zones = [...new Set(live.map(p => bedParts(p.bed).zone))].sort();
+    bar.hidden = zones.length < 2;
+    bar.textContent = '';
+    if (bar.hidden) return;
+    for (const [value, label] of [['', '全部'], ...zones.map(z => [z, z + ' 區'])]) {
+      const button = document.createElement('button');
+      button.textContent = label;
+      button.setAttribute('aria-pressed', String(zone === value));
+      button.onclick = () => { zone = value; save(); render(); };
+      bar.append(button);
+    }
+  }
 
-    const head = document.createElement('div');
-    head.className = 'head';
-    head.setAttribute('role', 'button');
-    head.tabIndex = 0;
+  function listView(list) {
+    const frag = document.createDocumentFragment();
+    for (const patient of list) frag.append(listRow(patient));
+    return frag;
+  }
 
-    const left = document.createElement('div');
-    left.innerHTML = `<div class="bed">${esc(patient.bed || '—')}</div>` +
-      (patient.oa ? `<div class="oa">${esc(patient.oa)}</div>` : '');
+  function listRow(patient) {
+    const node = document.createElement('div');
+    node.className = 'row';
+    node.dataset.d = dispClass(dispOf(patient));
+    node.setAttribute('role', 'button');
+    node.tabIndex = 0;
 
-    const who = document.createElement('div');
-    who.className = 'who';
-    const meta = [patient.age && patient.age + '歲', patient.sex, patient.dept]
-      .filter(Boolean).join('・');
-    who.innerHTML = `<div class="nm">${esc(patient.name || '未命名')}</div>` +
-      `<div class="sub num">${esc(patient.chart)}${meta ? '　' + esc(meta) : ''}</div>` +
-      (patient.ccTitle ? `<div class="cc">${esc(patient.ccTitle)}</div>` : '') +
-      (patient.cc ? `<div class="ccb">${esc(patient.cc)}</div>` : '');
+    const bed = document.createElement('div');
+    bed.className = 'rbed';
+    bed.textContent = patient.bed || '—';
+
+    const mid = document.createElement('div');
+    mid.className = 'rmid';
+    const disposition = dispOf(patient);
+    mid.innerHTML =
+      `<div class="rtop"><span class="rname">${esc(patient.name || '未命名')}</span>` +
+      `<span class="chip disp" data-blank="${disposition ? 0 : 1}">${esc(disposition || '—')}</span>` +
+      (patient.dept ? `<span class="chip dept">${esc(patient.dept)}</span>` : '') + `</div>` +
+      `<div class="rsub num">${esc(patient.chart)}　${esc(patient.age || '')}${esc(patient.sex || '')}</div>` +
+      ((patient.ccTitle || patient.cc)
+        ? `<div class="rcc">${esc([patient.ccTitle, patient.cc].filter(Boolean).join('・'))}</div>` : '');
 
     const tally = document.createElement('div');
-    tally.className = 'tally';
-    const open = todoCount(patient);
+    tally.className = 'rtal';
+    const open = openTodos(patient);
     if (open) {
       const pill = document.createElement('span');
-      pill.className = 'pill' + (node.dataset.flag === '2' ? ' on' : '');
-      pill.textContent = '待辦 ' + open;
+      pill.className = 'pill ' + urgency(patient);
+      pill.textContent = '☑ ' + open;
       tally.append(pill);
     }
     if (patient.notes.length) {
       const pill = document.createElement('span');
-      pill.className = 'pill note';
-      pill.textContent = '筆記 ' + patient.notes.length;
+      pill.className = 'pill';
+      pill.textContent = '✎ ' + patient.notes.length;
       tally.append(pill);
     }
 
-    head.append(left, who, tally);
-    const toggle = () => {
-      openChart = openChart === patient.chart ? null : patient.chart;
-      render();
-      if (openChart === patient.chart) {
-        document.querySelector('.pt.open')?.scrollIntoView({block: 'nearest'});
-      }
-    };
-    head.addEventListener('click', toggle);
-    head.addEventListener('keydown', event => {
-      if (event.key === 'Enter' || event.key === ' ') {event.preventDefault(); toggle();}
+    node.append(bed, mid, tally);
+    node.addEventListener('click', () => openDetail(patient.chart));
+    node.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(patient.chart); }
     });
-    node.append(head);
-    if (openChart === patient.chart) node.append(detail(patient));
     return node;
   }
 
-  function detail(patient) {
-    const box = document.createElement('div');
-    box.className = 'body';
-    const which = tab[patient.chart] || 'todos';
+  function blockView(list) {
+    const frag = document.createDocumentFragment();
+    const groups = new Map();
+    for (const patient of list) {
+      const key = bedParts(patient.bed).zone;
+      if (zone && key !== zone) continue;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(patient);
+    }
+    if (!groups.size) {
+      frag.append(blankBox('這一區沒有病人', '切到別的區看看。'));
+      return frag;
+    }
+    for (const key of [...groups.keys()].sort()) {
+      const section = document.createElement('section');
+      section.className = 'zone';
+      if (groups.size > 1) {
+        const title = document.createElement('h2');
+        title.textContent = key + ' 區';
+        section.append(title);
+      }
+      const grid = document.createElement('div');
+      grid.className = 'grid';
+      for (const cell of layout(groups.get(key))) grid.append(cell);
+      section.append(grid);
+      frag.append(section);
+    }
+    return frag;
+  }
 
+  // Keeps the physical shape of a zone: a missing bed number leaves an empty slot so
+  // every other bed stays in the grid position you expect it to be in.
+  function layout(group) {
+    const byNumber = new Map();
+    const loose = [];
+    for (const patient of group) {
+      const {n} = bedParts(patient.bed);
+      if (n === null || byNumber.has(n)) loose.push(patient); else byNumber.set(n, patient);
+    }
+    const numbers = [...byNumber.keys()];
+    const span = numbers.length ? Math.max(...numbers) - Math.min(...numbers) + 1 : 0;
+    const cells = [];
+    // Holes are skipped while searching (they would be meaningless there) and when the
+    // numbering is implausibly sparse, which would render hundreds of empty slots.
+    if (numbers.length && !query.trim() && span <= 60) {
+      const low = Math.min(...numbers), high = Math.max(...numbers);
+      for (let n = low; n <= high; n += 1) cells.push(byNumber.has(n) ? blockCell(byNumber.get(n)) : hole(n));
+    } else {
+      for (const n of numbers.sort((a, b) => a - b)) cells.push(blockCell(byNumber.get(n)));
+    }
+    for (const patient of loose) cells.push(blockCell(patient));
+    return cells;
+  }
+  function hole(n) {
+    const node = document.createElement('div');
+    node.className = 'cell hole';
+    node.dataset.d = '';
+    node.innerHTML = `<div class="ctop"><span class="cbed num">${n}</span></div>`;
+    return node;
+  }
+
+  function blockCell(patient) {
+    const node = document.createElement('div');
+    node.className = 'cell';
+    node.dataset.d = dispClass(dispOf(patient));
+    node.setAttribute('role', 'button');
+    node.tabIndex = 0;
+    const open = openTodos(patient);
+    node.innerHTML =
+      `<div class="ctop"><span class="cbed num">${esc(patient.bed || '—')}</span>` +
+      `<span class="cdisp">${esc(dispOf(patient))}</span></div>` +
+      `<div class="cname">${esc(patient.name || '未命名')}</div>` +
+      `<div class="cmid"><span>${esc(patient.dept || '')}</span>` +
+      (open ? `<span class="ctodo ${urgency(patient)}">☑${open}</span>` : '') + `</div>` +
+      (patient.ccTitle || patient.cc
+        ? `<div class="ccc">${esc([patient.ccTitle, patient.cc].filter(Boolean).join('・'))}</div>` : '');
+    node.addEventListener('click', () => openDetail(patient.chart));
+    node.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(patient.chart); }
+    });
+    return node;
+  }
+
+  /* ---- detail page ------------------------------------------------------ */
+  function openDetail(chart) { openChart = chart; drawDetail(); }
+  function closeDetail() {
+    openChart = null;
+    $('detail').classList.remove('on');
+    $('detail').textContent = '';
+    render();
+  }
+
+  function drawDetail() {
+    const page = $('detail');
+    const patient = state.patients[openChart];
+    if (!patient) { closeDetail(); return; }
+    page.textContent = '';
+    page.classList.add('on');
+    page.dataset.d = dispClass(dispOf(patient));
+
+    const head = document.createElement('div');
+    head.className = 'phead';
+    head.dataset.d = page.dataset.d;
+    const who = document.createElement('div');
+    who.innerHTML = `<div class="pbed num">${esc(patient.bed || '—')}</div>` +
+      `<div class="pname">${esc(patient.name || '未命名')}</div>` +
+      `<div class="pmeta num">${esc(patient.chart)}　${esc(patient.age || '')}${esc(patient.sex || '')}` +
+      `${patient.dept ? '　' + esc(patient.dept) : ''}</div>`;
+    const close = document.createElement('button');
+    close.className = 'x';
+    close.textContent = '✕';
+    close.setAttribute('aria-label', '關閉');
+    close.onclick = closeDetail;
+    head.append(who, close);
+
+    const body = document.createElement('div');
+    body.className = 'pbody';
+    body.append(dispEditor(patient));
+    if (patient.ccTitle || patient.cc) {
+      const ccSect = document.createElement('div');
+      ccSect.className = 'sect';
+      ccSect.innerHTML = '<div class="lab">主訴</div>' +
+        `<div class="ccbox">${patient.ccTitle ? `<b>${esc(patient.ccTitle)}</b>` : ''}${esc(patient.cc)}</div>`;
+      body.append(ccSect);
+    }
+
+    const which = tab[patient.chart] || 'todos';
     const seg = document.createElement('div');
     seg.className = 'seg';
     for (const [key, label] of [['todos', '待辦工作'], ['notes', '筆記']]) {
       const button = document.createElement('button');
       button.textContent = label;
       button.setAttribute('aria-selected', String(which === key));
-      button.onclick = () => {tab[patient.chart] = key; render();};
+      button.onclick = () => { tab[patient.chart] = key; drawDetail(); };
       seg.append(button);
     }
-    box.append(seg);
+    body.append(seg, composer(patient, which), which === 'todos' ? todoList(patient) : noteList(patient));
+    page.append(head, body);
+  }
 
+  function dispEditor(patient) {
+    const sect = document.createElement('div');
+    sect.className = 'sect';
+    sect.innerHTML = '<div class="lab">處置</div>';
+    const row = document.createElement('div');
+    row.className = 'dispedit';
+    const current = dispOf(patient);
+    for (const value of ['A', 'O']) {
+      const button = document.createElement('button');
+      button.textContent = value;
+      button.dataset.d = value;
+      button.setAttribute('aria-pressed', String(current.toUpperCase() === value));
+      button.onclick = () => { patient.oaUser = value; save(); drawDetail(); };
+      row.append(button);
+    }
+    const free = document.createElement('input');
+    free.value = current;
+    free.placeholder = '其他';
+    free.setAttribute('aria-label', '自訂處置');
+    free.onchange = () => { patient.oaUser = free.value.trim(); save(); drawDetail(); };
+    row.append(free);
+    const overridden = patient.oaUser !== undefined && patient.oaUser !== patient.oa;
+    if (overridden) {
+      const reset = document.createElement('button');
+      reset.textContent = '還原';
+      reset.onclick = () => { delete patient.oaUser; save(); drawDetail(); };
+      row.append(reset);
+    }
+    sect.append(row);
+    if (overridden) {
+      const note = document.createElement('div');
+      note.className = 'note';
+      note.textContent = `已手動覆寫，系統值為「${patient.oa || '空白'}」。重新掃描不會蓋掉你的設定。`;
+      sect.append(note);
+    }
+    return sect;
+  }
+
+  /* ---- composer with token-filtered snippets ---------------------------- */
+  function composer(patient, which) {
+    const wrap = document.createElement('div');
     const add = document.createElement('div');
     add.className = 'add';
     const input = document.createElement('input');
-    input.placeholder = which === 'todos' ? '要做什麼？例如 14:00 追 K' : '記一筆';
+    input.placeholder = which === 'todos' ? '要做什麼？' : '記一筆';
     input.enterKeyHint = 'done';
     const push = document.createElement('button');
     push.textContent = '加入';
+    add.append(input, push);
+    const snips = document.createElement('div');
+    snips.className = 'snips';
+    wrap.append(add, snips);
+
     const commit = () => {
       const value = input.value.trim();
       if (!value) return;
@@ -467,37 +708,60 @@
       if (which === 'todos') patient.todos.unshift({id: uid(), t: stamp, text: value, star: false, done: false});
       else patient.notes.unshift({id: uid(), t: stamp, text: value, important: false});
       input.value = '';
-      save();
-      render();
-      // Keep typing without reopening: the field is recreated by render().
-      const again = document.querySelector('.pt.open .add input');
-      if (again) again.focus();
+      save(); drawDetail();
+      document.querySelector('.pbody .add input')?.focus();
     };
     push.onclick = commit;
-    input.addEventListener('keydown', event => {if (event.key === 'Enter') commit();});
-    add.append(input, push);
-    box.append(add);
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') commit(); });
+    if (which !== 'todos') return wrap;
 
-    box.append(which === 'todos' ? todoList(patient) : noteList(patient));
-    return box;
+    // The token is whatever has been typed since the start of the field or the last
+    // space or punctuation, so a snippet can finish a part-written line.
+    const tokenOf = value => (String(value).match(/[^\s,，、;；。.]*$/) || [''])[0];
+    const used = state.use || (state.use = {});
+    const paint = () => {
+      const token = tokenOf(input.value).toLowerCase();
+      const pool = SNIPPETS
+        .filter(s => !token || s.toLowerCase().includes(token)
+          || s.toLowerCase().replace(/\s+/g, '').includes(token.replace(/\s+/g, '')))
+        .sort((a, b) => (used[b] || 0) - (used[a] || 0));
+      snips.textContent = '';
+      for (const snippet of pool.slice(0, 14)) {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.textContent = snippet;
+        // mousedown is prevented so the keyboard stays up; a plain click blurs first.
+        chip.addEventListener('mousedown', e => e.preventDefault());
+        chip.onclick = () => {
+          const value = input.value, token = tokenOf(value);
+          input.value = value.slice(0, value.length - token.length) + snippet;
+          used[snippet] = (used[snippet] || 0) + 1;
+          save();
+          input.focus();
+          paint();
+        };
+        snips.append(chip);
+      }
+    };
+    input.addEventListener('input', paint);
+    paint();
+    return wrap;
   }
 
   function todoList(patient) {
     const wrap = document.createElement('div');
-    const live = patient.todos.filter(item => !item.done)
-      .sort((a, b) => (b.star - a.star) || (b.t - a.t));
-    const done = patient.todos.filter(item => item.done).sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
-
-    const list = document.createElement('ul');
+    const live = patient.todos.filter(t => !t.done).sort((a, b) => (b.star - a.star) || (b.t - a.t));
+    const done = patient.todos.filter(t => t.done).sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
     if (!live.length) {
       const blank = document.createElement('div');
       blank.className = 'empty';
       blank.textContent = '沒有待辦。';
       wrap.append(blank);
+    } else {
+      const list = document.createElement('ul');
+      for (const item of live) list.append(todoRow(patient, item));
+      wrap.append(list);
     }
-    for (const item of live) list.append(todoRow(patient, item));
-    wrap.append(list);
-
     if (done.length) {
       const fold = document.createElement('details');
       fold.className = 'fin';
@@ -518,16 +782,12 @@
     tick.className = 'tick';
     tick.textContent = '✓';
     tick.setAttribute('aria-label', item.done ? '標記為未完成' : '標記為完成');
-    tick.onclick = () => {
-      item.done = !item.done;
-      item.doneAt = item.done ? Date.now() : 0;
-      save(); render();
-    };
+    tick.onclick = () => { item.done = !item.done; item.doneAt = item.done ? Date.now() : 0; save(); drawDetail(); };
     const star = document.createElement('button');
     star.className = 'star' + (item.star ? ' on' : '');
     star.textContent = item.star ? '★' : '☆';
     star.setAttribute('aria-label', '優先');
-    star.onclick = () => {item.star = !item.star; save(); render();};
+    star.onclick = () => { item.star = !item.star; save(); drawDetail(); };
     const text = document.createElement('div');
     text.className = 'txt';
     text.innerHTML = esc(item.text) +
@@ -536,10 +796,7 @@
     kill.className = 'kill';
     kill.textContent = '×';
     kill.setAttribute('aria-label', '刪除');
-    kill.onclick = () => {
-      patient.todos = patient.todos.filter(other => other.id !== item.id);
-      save(); render();
-    };
+    kill.onclick = () => { patient.todos = patient.todos.filter(o => o.id !== item.id); save(); drawDetail(); };
     row.append(tick, star, text, kill);
     return row;
   }
@@ -562,7 +819,7 @@
       star.className = 'star' + (note.important ? ' on' : '');
       star.textContent = note.important ? '★' : '☆';
       star.setAttribute('aria-label', '重要');
-      star.onclick = () => {note.important = !note.important; save(); render();};
+      star.onclick = () => { note.important = !note.important; save(); drawDetail(); };
       const text = document.createElement('div');
       text.className = 'txt';
       text.innerHTML = esc(note.text) + `<div class="when num">${clock(note.t)}</div>`;
@@ -570,10 +827,7 @@
       kill.className = 'kill';
       kill.textContent = '×';
       kill.setAttribute('aria-label', '刪除');
-      kill.onclick = () => {
-        patient.notes = patient.notes.filter(other => other.id !== note.id);
-        save(); render();
-      };
+      kill.onclick = () => { patient.notes = patient.notes.filter(o => o.id !== note.id); save(); drawDetail(); };
       row.append(star, text, kill);
       list.append(row);
     }
@@ -581,31 +835,26 @@
     return wrap;
   }
 
-  function esc(value) {
-    return String(value === null || value === undefined ? '' : value)
-      .replace(/[&<>"']/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch]));
-  }
-
   /* ---- wiring ----------------------------------------------------------- */
+  $('mList').onclick = () => { view = 'list'; save(); render(); };
+  $('mBlock').onclick = () => { view = 'block'; save(); render(); };
+  $('q').addEventListener('input', e => { query = e.target.value; render(); });
   $('scan').onclick = startScan;
   $('closeSheet').onclick = stopScan;
-  $('sort').onchange = render;
-  $('paste').onclick = () => {
-    sheet.classList.add('on');
-    prog.textContent = '貼上文字備援';
-    $('manual').focus();
-  };
+  $('paste').onclick = () => { sheet.classList.add('on'); prog.textContent = '貼上文字備援'; $('manual').focus(); };
   $('useManual').onclick = async () => {
     try {
-      const patients = await toPatients(importBase64($('manual').value));
+      const patients = await toPatients(fromBase64($('manual').value));
       $('manual').value = '';
       stopScan();
       merge(patients);
-    } catch (error) {
-      prog.textContent = '匯入失敗：' + error.message;
-    }
+    } catch (error) { prog.textContent = '匯入失敗：' + error.message; }
   };
-  document.addEventListener('visibilitychange', () => {if (document.hidden && stream) stopScan();});
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    if (openChart) closeDetail(); else if (stream) stopScan();
+  });
+  document.addEventListener('visibilitychange', () => { if (document.hidden && stream) stopScan(); });
   render();
 })();
 </script>
