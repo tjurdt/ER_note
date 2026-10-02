@@ -20,10 +20,10 @@
   /* Night mode: the same warm family pulled down into deep browns, so the signal
      colours keep their meaning instead of becoming a second palette to learn. */
   :root[data-theme="dark"]{
-    --bg:#1b1411; --panel:#261d18; --panel2:#33271f; --line:#42332a;
-    --ink:#f1e5d9; --dim:#b4a08d; --faint:#8b7462;
-    --signal:#e0a23a; --done:#80a86e; --alert:#dd6e55; --key:#b48a66; --other:#6fa0c5;
-    --onkey:#241a13; --ondisp:#1b1411; --rowtint:13%; --celltint:16%; --shadow:rgba(0,0,0,.35);
+    --bg:#332721; --panel:#3e3029; --panel2:#4b3a31; --line:#5c4839;
+    --ink:#f4ece2; --dim:#c6b29d; --faint:#a08b76;
+    --signal:#e8ae4c; --done:#8db877; --alert:#e57b60; --key:#c09872; --other:#7fb0d4;
+    --onkey:#2a2018; --ondisp:#2a2018; --rowtint:12%; --celltint:14%; --shadow:rgba(0,0,0,.28);
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{margin:0;background:var(--bg);color:var(--ink);overscroll-behavior-y:contain}
@@ -114,7 +114,8 @@
   .prow1{display:flex;align-items:center;gap:8px}
   .pbed{font-size:19px;font-weight:800;line-height:1.1;white-space:nowrap}
   .pname{font-size:19px;font-weight:650;line-height:1.1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .pdisp{flex:none;min-width:54px;margin-left:auto;padding:5px 8px;font-size:16px;font-weight:800;
+  .pctl{display:flex;align-items:center;gap:6px;margin-left:auto;flex:none}
+  .pdisp{flex:none;min-width:54px;padding:5px 8px;font-size:16px;font-weight:800;
     text-align:center;color:var(--disp);background:transparent;
     border:1.5px solid var(--disp);border-radius:8px}
   .pdisp[data-blank="1"]{color:var(--faint);border-color:var(--line);font-weight:600}
@@ -239,7 +240,7 @@
     document.documentElement.dataset.theme = theme;
     $('theme').textContent = theme === 'dark' ? '☀' : '☾';
     document.querySelector('meta[name="theme-color"]')
-      ?.setAttribute('content', theme === 'dark' ? '#1b1411' : '#faf6f0');
+      ?.setAttribute('content', theme === 'dark' ? '#332721' : '#faf6f0');
   }
 
   function load() {
@@ -266,9 +267,8 @@
   }
 
   /* ---- disposition ------------------------------------------------------
-     The scanned value is authoritative, but the user may override it on the
-     phone. The override lives in its own field so a re-scan never silently
-     discards it and the system value stays available for comparison.     */
+     The user may set this on the phone between scans; the next scan replaces it,
+     because the system value is the fresher answer.                      */
   const dispOf = p => (p.oaUser !== undefined && p.oaUser !== null ? p.oaUser : p.oa) || '';
   const dispClass = value => {
     const letter = String(value || '').trim().toUpperCase().charAt(0);
@@ -308,6 +308,9 @@
       if (existing) {
         if (existing.bed && row.bed && existing.bed !== row.bed) moved += 1;
         for (const field of SYS) existing[field] = row[field];
+        // The scan wins on disposition: it is the system's answer and it is fresher.
+        // The bed flag is the user's own and is left alone.
+        delete existing.oaUser;
         if (existing.left) { existing.left = false; delete existing.leftAt; }
         updated += 1;
       } else {
@@ -426,13 +429,18 @@
 
     const all = Object.values(state.patients);
     const live = sortPatients(all.filter(p => !p.left));
-    const shown = live.filter(matches);
+    const zones = zonesOf(live);
+    // A remembered zone that the latest scan no longer contains would otherwise leave
+    // the board permanently empty, so fall back to showing everything.
+    if (zone && !zones.some(([key]) => key === zone)) { zone = ''; save(); }
+    const inZone = p => !zone || bedParts(p.bed).zone === zone;
+    const shown = live.filter(p => matches(p) && inZone(p));
     const gone = all.filter(p => p.left && matches(p)).sort((a, b) => (b.leftAt || 0) - (a.leftAt || 0));
 
     $('stamp').innerHTML = state.updatedAt
       ? `${shown.length}${shown.length !== live.length ? '/' + live.length : ''} 人<br>${clock(state.updatedAt)}`
       : '';
-    renderZones(live);
+    renderZones(zones);
 
     if (!all.length) {
       board.append(blankBox('還沒有清單', '在電腦上按「傳送到手機」，再用上面的「掃描」讀 QR。'));
@@ -460,16 +468,26 @@
     return node;
   }
 
-  function renderZones(live) {
+  // Zones are derived from whatever was last scanned, so the bar has to be rebuilt
+  // from the current patients every time rather than from a remembered list.
+  function zonesOf(live) {
+    const counts = new Map();
+    for (const patient of live) {
+      const key = bedParts(patient.bed).zone;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }
+  function renderZones(zones) {
     const bar = $('zones');
-    if (view !== 'block') { bar.hidden = true; return; }
-    const zones = [...new Set(live.map(p => bedParts(p.bed).zone))].sort();
     bar.hidden = zones.length < 2;
     bar.textContent = '';
     if (bar.hidden) return;
-    for (const [value, label] of [['', '全部'], ...zones.map(z => [z, z + ' 區'])]) {
+    const total = zones.reduce((sum, [, n]) => sum + n, 0);
+    const entries = [['', '全部', total], ...zones.map(([z, n]) => [z, z + ' 區', n])];
+    for (const [value, label, count] of entries) {
       const button = document.createElement('button');
-      button.textContent = label;
+      button.textContent = `${label} ${count}`;
       button.setAttribute('aria-pressed', String(zone === value));
       button.onclick = () => { zone = value; save(); render(); };
       bar.append(button);
@@ -534,14 +552,10 @@
     const groups = new Map();
     for (const patient of list) {
       const key = bedParts(patient.bed).zone;
-      if (zone && key !== zone) continue;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(patient);
     }
-    if (!groups.size) {
-      frag.append(blankBox('這一區沒有病人', '切到別的區看看。'));
-      return frag;
-    }
+    if (!groups.size) return frag;
     for (const key of [...groups.keys()].sort()) {
       const section = document.createElement('section');
       section.className = 'zone';
@@ -683,7 +697,8 @@
       else { patient.oaUser = 'O'; dispCustom = false; }
       save(); drawDetail();
     };
-    row1.append(disp);
+    const controls = document.createElement('div');
+    controls.className = 'pctl';
 
     if (custom) {
       const free = document.createElement('input');
@@ -693,9 +708,12 @@
       free.maxLength = 6;
       free.setAttribute('aria-label', '自訂處置');
       free.onchange = () => { patient.oaUser = free.value.trim(); dispCustom = false; save(); drawDetail(); };
-      row1.append(free);
+      // Placed before the cycle button so turning the custom field on or off never
+      // moves the button out from under your thumb.
+      controls.append(free);
       if (dispCustom) setTimeout(() => free.focus(), 0);
     }
+    controls.append(disp);
 
     // Waiting-for-a-bed is the user's own flag, so a re-scan never clears it.
     const bedWait = document.createElement('button');
@@ -704,7 +722,8 @@
     bedWait.setAttribute('aria-pressed', String(!!patient.bedWait));
     bedWait.setAttribute('aria-label', '待床');
     bedWait.onclick = () => { patient.bedWait = !patient.bedWait; save(); drawDetail(); };
-    row1.append(bedWait);
+    controls.append(bedWait);
+    row1.append(controls);
 
     const overridden = patient.oaUser !== undefined && patient.oaUser !== patient.oa;
 
