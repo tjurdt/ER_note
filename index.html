@@ -15,7 +15,7 @@
     --ink:#3b3028; --dim:#7a6a5c; --faint:#a89683;
     --signal:#cf8a14; --done:#6e8f5f; --alert:#b5402f; --key:#7a5c44; --other:#4a7b9d;
     --onkey:#fff; --ondisp:#fff; --rowtint:5%; --celltint:7%; --shadow:rgba(80,60,40,.07);
-    --pad:12px; --rowh:max(94px,16vh);
+    --pad:12px; --rowh:max(58px,8vh);
   }
   /* Night mode: the same warm family pulled down into deep browns, so the signal
      colours keep their meaning instead of becoming a second palette to learn. */
@@ -85,11 +85,12 @@
   .ctop{display:flex;align-items:center;gap:3px}
   .cbed{font-size:10px;color:var(--faint);font-weight:650;line-height:1}
   .cdisp{margin-left:auto;font-size:10.5px;font-weight:800;color:var(--disp);line-height:1}
-  .cname{font-size:15px;font-weight:700;line-height:1.15;margin-top:3px;word-break:break-all}
-  .cmid{display:flex;align-items:center;gap:4px;margin-top:2px;font-size:11px;color:var(--dim)}
+  .cname{font-size:14px;font-weight:700;line-height:1.2;margin-top:2px;letter-spacing:-.01em;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cmid{display:flex;align-items:center;gap:4px;margin-top:1px;font-size:10.5px;color:var(--dim)}
   .ctodo{margin-left:auto;font-weight:700;color:var(--faint);white-space:nowrap}
   .ctodo.on{color:var(--signal)} .ctodo.hot{color:var(--alert)}
-  @media (min-width:620px){:root{--rowh:max(112px,17vh)} .cname{font-size:19px} .cmid{font-size:12.5px}}
+  @media (min-width:620px){:root{--rowh:max(72px,9.5vh)} .cname{font-size:18px} .cmid{font-size:12.5px}}
 
   .pill{background:var(--panel2);border-radius:20px;padding:1px 8px;font-size:11.5px;font-weight:650;color:var(--dim)}
   .pill.on{background:var(--signal);color:var(--ondisp)}
@@ -129,7 +130,6 @@
   .pcc{font-size:12.5px;color:var(--ink);margin-top:4px;line-height:1.45}
   .pcc b{font-weight:700;margin-right:5px}
   .pcc.clip{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-  .pnote{font-size:10.5px;color:var(--faint);margin-top:3px}
   .pbody{flex:1;overflow:auto;padding:0 var(--pad) 24px}
   .seg{display:flex;gap:6px;margin:12px 0 8px}
   .seg button{flex:1;background:var(--panel2);color:var(--dim)}
@@ -725,7 +725,6 @@
     controls.append(bedWait);
     row1.append(controls);
 
-    const overridden = patient.oaUser !== undefined && patient.oaUser !== patient.oa;
 
     const row2 = document.createElement('div');
     row2.className = 'prow2 num';
@@ -744,12 +743,6 @@
       cc.title = '點一下展開或收合';
       cc.onclick = () => cc.classList.toggle('clip');
       col.append(cc);
-    }
-    if (overridden) {
-      const note = document.createElement('div');
-      note.className = 'pnote';
-      note.textContent = `處置已手動覆寫，系統值「${patient.oa || '空白'}」。重新掃描不會蓋掉。`;
-      col.append(note);
     }
 
     const close = document.createElement('button');
