@@ -1,0 +1,10 @@
+# Private hospital-side code and patient data do not belong in this public repo.
+*.user.js
+*.zip
+*.har
+*.response.html
+*.deid.txt
+ward-round-*
+output/
+samples/
+node_modules/
