@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="app-version" content="1.0.1">
 <meta name="theme-color" content="#faf6f0">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -169,6 +170,8 @@
   .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0));transform:translateX(-50%);
     background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:22px;font-size:13.5px;
     z-index:70;max-width:88vw;text-align:center;box-shadow:0 4px 18px var(--shadow)}
+  .data-tools{padding:22px var(--pad) calc(36px + env(safe-area-inset-bottom,0));text-align:center}
+  .data-tools button{background:transparent;color:var(--dim);font-size:12px;text-decoration:underline}
   @media (prefers-reduced-motion:reduce){button:active{transform:none}}
 </style>
 </head>
@@ -193,6 +196,7 @@
 </header>
 
 <main id="board"></main>
+<footer class="data-tools"><button id="clearData" type="button">清除本機資料</button></footer>
 <div class="page" id="detail"></div>
 
 <div class="sheet" id="sheet">
@@ -256,6 +260,19 @@
     state.view = view; state.zone = zone; state.theme = theme;
     try { localStorage.setItem(KEY, JSON.stringify(state)); }
     catch (error) { toast('儲存失敗，裝置空間可能不足'); }
+  }
+  function clearLocalData() {
+    if (!window.confirm('確定清除這台裝置上的所有急診清單、筆記與待辦？清除後無法復原。')) return;
+    try { localStorage.removeItem(KEY); localStorage.removeItem(OLD); }
+    catch (error) { toast('清除失敗，請檢查瀏覽器儲存權限'); return; }
+    state = load();
+    view = 'list'; zone = ''; query = ''; tab = {}; dispCustom = false;
+    theme = window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    $('q').value = '';
+    $('manual').value = '';
+    applyTheme();
+    closeDetail();
+    toast('本機資料已清除');
   }
   function toast(message) {
     document.querySelector('.toast')?.remove();
@@ -909,6 +926,7 @@
   $('mBlock').onclick = () => { view = 'block'; save(); render(); };
   $('q').addEventListener('input', e => { query = e.target.value; render(); });
   $('scan').onclick = startScan;
+  $('clearData').onclick = clearLocalData;
   $('closeSheet').onclick = stopScan;
   $('paste').onclick = () => { sheet.classList.add('on'); prog.textContent = '貼上文字備援'; $('manual').focus(); };
   $('useManual').onclick = async () => {
