@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="app-version" content="1.0.1">
+<meta name="app-version" content="1.0.2">
 <meta name="theme-color" content="#faf6f0">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -16,7 +16,7 @@
     --ink:#3b3028; --dim:#7a6a5c; --faint:#a89683;
     --signal:#cf8a14; --done:#6e8f5f; --alert:#b5402f; --key:#7a5c44; --other:#4a7b9d;
     --onkey:#fff; --ondisp:#fff; --rowtint:5%; --celltint:7%; --shadow:rgba(80,60,40,.07);
-    --pad:12px; --rowh:max(58px,8vh);
+    --pad:12px; --rowh:max(64px,8.8vh);
   }
   /* Night mode: the same warm family pulled down into deep browns, so the signal
      colours keep their meaning instead of becoming a second palette to learn. */
@@ -52,10 +52,14 @@
   .modes{display:flex;background:var(--panel2);border-radius:8px;padding:2px;gap:2px}
   .modes button{background:transparent;color:var(--dim);padding:5px 9px;font-size:12.5px}
   .modes button[aria-pressed="true"]{background:var(--key);color:var(--onkey);font-weight:650}
-  .zones{display:flex;gap:5px;overflow-x:auto;margin-top:7px;scrollbar-width:none}
+  .filters{display:flex;gap:6px;align-items:center;margin-top:7px}
+  .filters[hidden],.zones[hidden]{display:none}
+  .zones{display:flex;flex:1;min-width:0;gap:5px;overflow-x:auto;scrollbar-width:none}
   .zones::-webkit-scrollbar{display:none}
   .zones button{flex:none;background:var(--panel2);color:var(--dim);padding:5px 11px;font-size:12.5px}
   .zones button[aria-pressed="true"]{background:var(--ink);color:var(--bg);font-weight:650}
+  #deptFilter{flex:none;max-width:118px;min-width:88px;padding:5px 7px;font-size:12.5px;
+    background:var(--panel2);border:0;color:var(--ink)}
 
   /* ---- list mode ---- */
   .row{display:grid;grid-template-columns:52px 1fr auto;gap:9px;align-items:center;
@@ -83,15 +87,22 @@
     background:color-mix(in srgb,var(--disp) var(--celltint),var(--panel));
     box-shadow:0 1px 3px var(--shadow),0 0 10px -5px var(--disp)}
   .cell.hole{background:transparent;border:1px dashed var(--line);opacity:.3;cursor:default}
-  .ctop{display:flex;align-items:center;gap:3px}
-  .cbed{font-size:10px;color:var(--faint);font-weight:650;line-height:1}
-  .cdisp{margin-left:auto;font-size:10.5px;font-weight:800;color:var(--disp);line-height:1}
-  .cname{font-size:14px;font-weight:700;line-height:1.2;margin-top:2px;letter-spacing:-.01em;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .cmid{display:flex;align-items:center;gap:4px;margin-top:1px;font-size:10.5px;color:var(--dim)}
-  .ctodo{margin-left:auto;font-weight:700;color:var(--faint);white-space:nowrap}
+  .ctop{display:flex;align-items:flex-start;gap:3px;height:23px;flex:none;overflow:hidden}
+  .cbed{font-size:clamp(8px,2.3vw,10px);color:var(--faint);font-weight:650;line-height:1.1;
+    min-width:0;max-height:23px;overflow:hidden;overflow-wrap:anywhere}
+  .bed-extra{display:block;font-size:8px;line-height:1.05;white-space:nowrap}
+  .cdisp{flex:none;margin-left:auto;font-size:10.5px;font-weight:800;color:var(--disp);line-height:1}
+  .cname{flex:none;font-size:clamp(10px,3.2vw,14px);font-weight:700;line-height:1.2;margin-top:1px;letter-spacing:-.025em;
+     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cmid{display:flex;flex:none;align-items:center;gap:4px;margin-top:1px;font-size:10.5px;color:var(--dim);
+    overflow:hidden;white-space:nowrap}
+  .cmid>span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .ctodo{flex:none;margin-left:auto;font-weight:700;color:var(--faint);white-space:nowrap}
   .ctodo.on{color:var(--signal)} .ctodo.hot{color:var(--alert)}
-  @media (min-width:620px){:root{--rowh:max(72px,9.5vh)} .cname{font-size:18px} .cmid{font-size:12.5px}}
+  .todo-icon{display:inline-block;width:9px;height:9px;margin-right:3px;border:1.5px solid currentColor;
+    border-radius:2px;vertical-align:-1px}
+  .todo-icon.starred{background:currentColor}
+  @media (min-width:620px){:root{--rowh:max(79px,10.5vh)} .cname{font-size:18px} .cmid{font-size:12.5px}}
 
   .pill{background:var(--panel2);border-radius:20px;padding:1px 8px;font-size:11.5px;font-weight:650;color:var(--dim)}
   .pill.on{background:var(--signal);color:var(--ondisp)}
@@ -192,7 +203,10 @@
     <button id="scan">掃描</button>
     <button id="paste" title="文字備援">貼上</button>
   </div>
-  <div class="zones" id="zones" hidden></div>
+  <div class="filters" id="filters" hidden>
+    <div class="zones" id="zones" hidden></div>
+    <select id="deptFilter" aria-label="依科別篩選" hidden></select>
+  </div>
 </header>
 
 <main id="board"></main>
@@ -236,7 +250,7 @@
 
   let state = load();
   let view = state.view || 'list';
-  let zone = state.zone || '';
+  let zone = state.zone || '', deptFilter = state.deptFilter || '';
   let theme = state.theme || (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   let query = '', openChart = null, tab = {}, dispCustom = false;
 
@@ -257,7 +271,7 @@
     return {updatedAt: 0, order: [], patients: {}, view: 'list', zone: '', use: {}};
   }
   function save() {
-    state.view = view; state.zone = zone; state.theme = theme;
+    state.view = view; state.zone = zone; state.deptFilter = deptFilter; state.theme = theme;
     try { localStorage.setItem(KEY, JSON.stringify(state)); }
     catch (error) { toast('儲存失敗，裝置空間可能不足'); }
   }
@@ -266,7 +280,7 @@
     try { localStorage.removeItem(KEY); localStorage.removeItem(OLD); }
     catch (error) { toast('清除失敗，請檢查瀏覽器儲存權限'); return; }
     state = load();
-    view = 'list'; zone = ''; query = ''; tab = {}; dispCustom = false;
+    view = 'list'; zone = ''; deptFilter = ''; query = ''; tab = {}; dispCustom = false;
     theme = window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
     $('q').value = '';
     $('manual').value = '';
@@ -313,6 +327,16 @@
     if (!terms.length) return true;
     const hay = haystack(patient);
     return terms.every(term => hay.includes(term));
+  }
+  function searchRank(patient) {
+    const phrase = query.trim().toLowerCase();
+    const fields = [patient.bed, patient.name].map(value => String(value || '').toLowerCase());
+    if (fields.some(value => value === phrase)) return 0;
+    if (fields.some(value => value.startsWith(phrase))) return 1;
+    const terms = phrase.split(/\s+/).filter(Boolean);
+    if (terms.every(term => fields.some(value => value.includes(term)))) return 2;
+    if (terms.some(term => fields.some(value => value.includes(term)))) return 3;
+    return 4;
   }
 
   /* ---- merge ------------------------------------------------------------ */
@@ -426,8 +450,9 @@
 
   /* ---- shared ----------------------------------------------------------- */
   const openTodos = p => p.todos.filter(t => !t.done).length;
+  const hasStarredTodo = p => p.todos.some(t => !t.done && t.star);
   function urgency(patient) {
-    if (patient.todos.some(t => !t.done && t.star)) return 'hot';
+    if (hasStarredTodo(patient)) return 'hot';
     if (openTodos(patient) || patient.notes.some(n => n.important)) return 'on';
     return '';
   }
@@ -451,13 +476,18 @@
     // the board permanently empty, so fall back to showing everything.
     if (zone && !zones.some(([key]) => key === zone)) { zone = ''; save(); }
     const inZone = p => !zone || bedParts(p.bed).zone === zone;
-    const shown = live.filter(p => matches(p) && inZone(p));
+    const deptPatients = live.filter(inZone);
+    const departments = [...new Set(deptPatients.map(deptOf))].sort((a, b) => a.localeCompare(b));
+    if (deptFilter && !departments.includes(deptFilter)) { deptFilter = ''; save(); }
+    const shown = live.filter(p => matches(p) && inZone(p) && (!deptFilter || deptOf(p) === deptFilter));
+    if (view === 'list' && query.trim()) shown.sort((a, b) => searchRank(a) - searchRank(b));
     const gone = all.filter(p => p.left && matches(p)).sort((a, b) => (b.leftAt || 0) - (a.leftAt || 0));
 
     $('stamp').innerHTML = state.updatedAt
       ? `${shown.length}${shown.length !== live.length ? '/' + live.length : ''} 人<br>${clock(state.updatedAt)}`
       : '';
     renderZones(zones);
+    renderDepartments(departments, zones.length > 1);
 
     if (!all.length) {
       board.append(blankBox('還沒有清單', '在電腦上按「傳送到手機」，再用上面的「掃描」讀 QR。'));
@@ -510,6 +540,20 @@
       bar.append(button);
     }
   }
+  const deptOf = patient => String(patient.dept || '').trim() || '未分科';
+  function renderDepartments(departments, hasZones) {
+    const select = $('deptFilter');
+    select.textContent = '';
+    for (const [value, label] of [['', '全部科別'], ...departments.map(dept => [dept, dept])]) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      select.append(option);
+    }
+    select.value = deptFilter;
+    select.hidden = departments.length < 2 && !deptFilter;
+    $('filters').hidden = !hasZones && select.hidden;
+  }
 
   function listView(list) {
     const frag = document.createDocumentFragment();
@@ -546,7 +590,11 @@
     if (open) {
       const pill = document.createElement('span');
       pill.className = 'pill ' + urgency(patient);
-      pill.textContent = '☑ ' + open;
+      const icon = document.createElement('span');
+      icon.className = 'todo-icon' + (hasStarredTodo(patient) ? ' starred' : '');
+      icon.setAttribute('aria-hidden', 'true');
+      pill.append(icon, ' ' + open);
+      pill.setAttribute('aria-label', `${open} 項未完成代辦${hasStarredTodo(patient) ? '，含星號' : ''}`);
       tally.append(pill);
     }
     if (patient.notes.length) {
@@ -628,13 +676,18 @@
     node.setAttribute('role', 'button');
     node.tabIndex = 0;
     const open = openTodos(patient);
+    const bed = String(patient.bed || '—');
+    const extraStart = bed.search(/[（(]/);
+    const bedLabel = extraStart > 0
+      ? `${esc(bed.slice(0, extraStart).trim())}<span class="bed-extra">${esc(bed.slice(extraStart).trim())}</span>`
+      : esc(bed);
     node.innerHTML =
-      `<div class="ctop"><span class="cbed num">${esc(patient.bed || '—')}</span>` +
+      `<div class="ctop"><span class="cbed num" title="${esc(bed)}">${bedLabel}</span>` +
       (patient.bedWait ? '<span class="cwait">床</span>' : '') +
       `<span class="cdisp">${esc(dispOf(patient))}</span></div>` +
       `<div class="cname">${esc(patient.name || '未命名')}</div>` +
       `<div class="cmid"><span>${esc(patient.dept || '')}</span>` +
-      (open ? `<span class="ctodo ${urgency(patient)}">☑${open}</span>` : '') + `</div>`;
+      (open ? `<span class="ctodo ${urgency(patient)}" aria-label="${open} 項未完成代辦${hasStarredTodo(patient) ? '，含星號' : ''}"><span class="todo-icon${hasStarredTodo(patient) ? ' starred' : ''}" aria-hidden="true"></span>${open}</span>` : '') + `</div>`;
     node.addEventListener('click', () => openDetail(patient.chart));
     node.addEventListener('keydown', e => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(patient.chart); }
@@ -925,6 +978,7 @@
   $('mList').onclick = () => { view = 'list'; save(); render(); };
   $('mBlock').onclick = () => { view = 'block'; save(); render(); };
   $('q').addEventListener('input', e => { query = e.target.value; render(); });
+  $('deptFilter').addEventListener('change', e => { deptFilter = e.target.value; save(); render(); });
   $('scan').onclick = startScan;
   $('clearData').onclick = clearLocalData;
   $('closeSheet').onclick = stopScan;
