@@ -252,7 +252,7 @@
   'use strict';
   // AI summary contract: parse, validate, cross-check against the exported TXT, and render.
 // Pure functions only. Inlined into the page by build.mjs and loaded by node tests and the desktop tools.
-// The format is defined in docs/SUMMARY_SPEC.md; keep the lists and limits below in step with that document.
+// The format is defined in the summary knowledge document; keep the lists and limits below in step with it.
 var EDSummary = (function () {
   var RISK = { high: '高風險', medium: '中風險', low: '低風險' };
   var URGENCY = {
@@ -311,7 +311,7 @@ var EDSummary = (function () {
       return { ok: false, value: null, errors: ['最外層必須是 JSON 物件'], warnings: warnings };
     }
     var chart = fit(data.chart, 20, '病歷號', warnings);
-    if (!chart) errors.push('缺少病歷號 chart');
+    // chart may be empty: the phone attaches such a summary to the patient it is pasted into.
     var risk = oneOf(data.risk, RISK), urgency = oneOf(data.urgency, URGENCY);
     if (!risk) errors.push('risk 必須是 high、medium 或 low');
     if (!urgency) errors.push('urgency 必須是 immediate、today、observe 或 consider_discharge');
@@ -1038,10 +1038,12 @@ if (typeof module !== 'undefined' && module.exports) module.exports = EDSummary;
   function importSummary(patient, raw) {
     const r = EDSummary.parse(raw);
     if (!r.ok) { toast('無法匯入：' + r.errors[0]); return false; }
-    if (r.value.chart !== patient.chart) {
+    // An empty chart number means "this patient", the one whose notes box the summary was pasted into.
+    if (r.value.chart && r.value.chart !== patient.chart) {
       toast(`病歷號不符：摘要是 ${r.value.chart}，這位病人是 ${patient.chart}`);
       return false;
     }
+    r.value.chart = patient.chart;
     patient.notes.unshift({id: uid(), t: Date.now(), text: EDSummary.flatten(r.value),
       important: r.value.risk === 'high', summary: r.value});
     if (r.warnings.length) toast('已匯入。' + r.warnings.join('；'));
