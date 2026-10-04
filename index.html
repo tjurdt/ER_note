@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="app-version" content="1.0.2">
+<meta name="app-version" content="1.1.0">
 <meta name="theme-color" content="#faf6f0">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -98,6 +98,26 @@
     overflow:hidden;white-space:nowrap}
   .cmid>span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis}
   .ctodo{flex:none;margin-left:auto;font-weight:700;color:var(--faint);white-space:nowrap}
+  /* AI summary card (see src/summary.js). Colours reuse the disposition palette. */
+  .sum{font-size:14px;line-height:1.5;color:var(--ink)}
+  .sum-head{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+  .sum-pill{font-size:12px;font-weight:700;padding:1px 8px;border-radius:999px;color:#fff;background:var(--faint)}
+  .sum-r-high,.sum-u-immediate{background:var(--alert)}
+  .sum-r-mid,.sum-u-today{background:var(--signal)}
+  .sum-u-observe{background:var(--other)}
+  .sum-r-low,.sum-u-consider_discharge{background:var(--done)}
+  .sum-line{font-weight:700;margin:2px 0 6px}
+  .sum-bed{font-size:16px;font-weight:700;margin-right:2px}
+  .sum-h{font-weight:700;color:var(--key);border-bottom:1px solid var(--line);margin:8px 0 3px;padding-bottom:2px}
+  .sum ol.sum-list{list-style:decimal;margin:0;padding-left:20px}
+  .sum ul.sum-list{list-style:disc;margin:0;padding-left:20px}
+  .sum li{display:block;padding:0;border-top:0;gap:0;margin:0 0 6px}
+  .sum-f{margin-top:1px}
+  .sum-b{font-size:12px;color:var(--dim);margin-top:1px}
+  .sum-st{font-size:11px;font-weight:700;padding:0 6px;border-radius:4px;margin-left:4px;border:1px solid currentColor}
+  .sum-st-untreated{color:var(--alert)} .sum-st-in_progress{color:var(--signal)} .sum-st-addressed{color:var(--done)}
+  .sum-kind{font-size:11px;font-weight:700;padding:0 6px;border-radius:4px;color:#fff;margin-right:4px}
+  .sum-k-test{background:var(--other)} .sum-k-treatment{background:var(--key)} .sum-k-drug{background:var(--signal)}
   .ctodo.on{color:var(--signal)} .ctodo.hot{color:var(--alert)}
   .todo-icon{display:inline-block;width:9px;height:9px;margin-right:3px;border:1.5px solid currentColor;
     border-radius:2px;vertical-align:-1px}
@@ -230,6 +250,194 @@
 <script>
 (function () {
   'use strict';
+  // AI summary contract: parse, validate, cross-check against the exported TXT, and render.
+// Pure functions only. Inlined into the page by build.mjs and loaded by node tests and the desktop tools.
+// The format is defined in docs/SUMMARY_SPEC.md; keep the lists and limits below in step with that document.
+var EDSummary = (function () {
+  var RISK = { high: '高風險', medium: '中風險', low: '低風險' };
+  var URGENCY = {
+    immediate: '需立即處理', today: '今日處理', observe: '可觀察', consider_discharge: '可考慮出院',
+  };
+  var STATUS = { untreated: '未處理', in_progress: '處理中', addressed: '已處理' };
+  var KIND = { test: '檢查', treatment: '處置', drug: '用藥' };
+  var MAX_PROBLEMS = 4, MAX_SUGGESTIONS = 5, MAX_BASIS = 6;
+  // Field length budgets. They keep a card to half an A4 page; longer text is cut and the cut is reported.
+  var LIMIT = {
+    bed: 12, summary: 60, title: 40, finding: 90, item: 40, purpose: 50, reason: 80,
+    dischargeReason: 60, basisItem: 40, basisValue: 40,
+  };
+
+  function oneOf(value, table) {
+    return Object.prototype.hasOwnProperty.call(table, value) ? value : '';
+  }
+
+  // Trims one text field to its budget. A cut is reported, never silent.
+  function fit(value, max, label, warnings) {
+    var s = typeof value === 'string' ? value.trim() : '';
+    if (s.length > max) {
+      warnings.push(label + ' 超過 ' + max + ' 字，已截短');
+      return s.slice(0, max);
+    }
+    return s;
+  }
+
+  function basisOf(list, errors, warnings, where) {
+    if (!Array.isArray(list)) return [];
+    if (list.length > MAX_BASIS) warnings.push(where + ' 依據超過 ' + MAX_BASIS + ' 筆，只保留前 ' + MAX_BASIS + ' 筆');
+    return list.slice(0, MAX_BASIS).map(function (b) {
+      return {
+        date: fit(b && b.date, 10, where + ' 依據日期', warnings),
+        time: fit(b && b.time, 8, where + ' 依據時間', warnings),
+        source: fit(b && b.source, 20, where + ' 依據來源', warnings),
+        item: fit(b && b.item, LIMIT.basisItem, where + ' 依據項目', warnings),
+        value: fit(b && b.value, LIMIT.basisValue, where + ' 依據數值', warnings),
+      };
+    }).filter(function (b) {
+      if (!b.date) { errors.push(where + '：依據缺少日期'); return false; }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(b.date)) errors.push(where + '：日期格式需為 YYYY-MM-DD（' + b.date + '）');
+      return true;
+    });
+  }
+
+  // Returns { ok, value, errors, warnings }. ok is false only for problems that make the note meaningless.
+  function parse(raw) {
+    var errors = [], warnings = [];
+    var body = String(raw || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+    var data;
+    try { data = JSON.parse(body); } catch (e) {
+      return { ok: false, value: null, errors: ['不是有效的 JSON：' + e.message], warnings: warnings };
+    }
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      return { ok: false, value: null, errors: ['最外層必須是 JSON 物件'], warnings: warnings };
+    }
+    var chart = fit(data.chart, 20, '病歷號', warnings);
+    if (!chart) errors.push('缺少病歷號 chart');
+    var risk = oneOf(data.risk, RISK), urgency = oneOf(data.urgency, URGENCY);
+    if (!risk) errors.push('risk 必須是 high、medium 或 low');
+    if (!urgency) errors.push('urgency 必須是 immediate、today、observe 或 consider_discharge');
+
+    var problems = Array.isArray(data.problems) ? data.problems : [];
+    if (problems.length > MAX_PROBLEMS) warnings.push('問題超過 ' + MAX_PROBLEMS + ' 項，只保留前 ' + MAX_PROBLEMS + ' 項');
+    var suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
+    if (suggestions.length > MAX_SUGGESTIONS) warnings.push('建議超過 ' + MAX_SUGGESTIONS + ' 項，只保留前 ' + MAX_SUGGESTIONS + ' 項');
+
+    var value = {
+      schemaVersion: 1, chart: chart, bed: fit(data.bed, LIMIT.bed, '床號', warnings),
+      risk: risk, urgency: urgency,
+      summary: fit(data.summary, LIMIT.summary, '總結', warnings),
+      problems: problems.slice(0, MAX_PROBLEMS).map(function (p, i) {
+        var where = '問題' + (i + 1);
+        return {
+          title: fit(p && p.title, LIMIT.title, where + ' 名稱', warnings),
+          finding: fit(p && p.finding, LIMIT.finding, where + ' 發現', warnings),
+          status: oneOf(p && p.status, STATUS) || 'untreated',
+          basis: basisOf(p && p.basis, errors, warnings, where),
+        };
+      }).filter(function (p) { return p.title; }),
+      suggestions: suggestions.slice(0, MAX_SUGGESTIONS).map(function (s, i) {
+        var where = '建議' + (i + 1);
+        var kind = oneOf(s && s.kind, KIND);
+        if (!kind) errors.push(where + '：kind 必須是 test、treatment 或 drug');
+        return {
+          kind: kind,
+          item: fit(s && s.item, LIMIT.item, where + ' 名稱', warnings),
+          purpose: fit(s && s.purpose, LIMIT.purpose, where + ' 目的', warnings),
+          reason: fit(s && s.reason, LIMIT.reason, where + ' 理由', warnings),
+          basis: basisOf(s && s.basis, errors, warnings, where),
+        };
+      }).filter(function (s) { return s.item; }),
+      discharge: {
+        consider: !!(data.discharge && data.discharge.consider === true),
+        reason: fit(data.discharge && data.discharge.reason, LIMIT.dischargeReason, '出院理由', warnings),
+      },
+      generatedAt: fit(data.generatedAt, 30, '時間', warnings),
+    };
+    if (value.problems.length === 0) warnings.push('沒有問題條目');
+    return { ok: errors.length === 0, value: value, errors: errors, warnings: warnings };
+  }
+
+  // Every basis date, value and item should appear verbatim in the exported source text.
+  // Anything that does not is reported, so an invented date or number cannot pass unnoticed.
+  function crossCheck(value, source) {
+    var src = String(source || ''), low = src.toLowerCase(), issues = [];
+    function check(b, where) {
+      if (src.indexOf(b.date) < 0) issues.push(where + '：日期 ' + b.date + ' 不在原始資料中');
+      if (b.value && src.indexOf(b.value) < 0) issues.push(where + '：數值 ' + b.value + ' 不在原始資料中');
+      if (b.item && low.indexOf(b.item.toLowerCase()) < 0) issues.push(where + '：項目 ' + b.item + ' 不在原始資料中');
+    }
+    value.problems.forEach(function (p, i) { p.basis.forEach(function (b) { check(b, '問題' + (i + 1)); }); });
+    value.suggestions.forEach(function (s, i) { s.basis.forEach(function (b) { check(b, '建議' + (i + 1)); }); });
+    return issues;
+  }
+
+  function basisText(list) {
+    return list.map(function (b) {
+      return [b.date, b.time, b.source, b.item, b.value].filter(Boolean).join(' ');
+    }).join('；');
+  }
+
+  // Plain-text form, used for search and as the fallback text of the note.
+  function flatten(value) {
+    var lines = ['[' + (RISK[value.risk] || '') + '｜' + (URGENCY[value.urgency] || '') + ']'
+      + (value.bed ? ' 床 ' + value.bed : '')];
+    if (value.summary) lines.push(value.summary);
+    value.problems.forEach(function (p, i) {
+      lines.push((i + 1) + '. ' + p.title + '（' + STATUS[p.status] + '）');
+      if (p.finding) lines.push('   ' + p.finding);
+      if (p.basis.length) lines.push('   依據：' + basisText(p.basis));
+    });
+    value.suggestions.forEach(function (s) {
+      lines.push('・[' + KIND[s.kind] + '] ' + s.item);
+      if (s.purpose) lines.push('   目的：' + s.purpose);
+      if (s.reason) lines.push('   理由：' + s.reason);
+      if (s.basis.length) lines.push('   依據：' + basisText(s.basis));
+    });
+    lines.push('出院：' + (value.discharge.consider ? '可考慮' : '尚需住院')
+      + (value.discharge.reason ? '；' + value.discharge.reason : ''));
+    return lines.join('\n');
+  }
+
+  // Card markup. Every value goes through esc(), so the note cannot inject markup.
+  function html(value, esc) {
+    var riskClass = value.risk === 'high' ? 'sum-r-high' : value.risk === 'medium' ? 'sum-r-mid' : 'sum-r-low';
+    var out = '<div class="sum">';
+    out += '<div class="sum-head">'
+      + (value.bed ? '<span class="sum-bed">床 ' + esc(value.bed) + '</span>' : '')
+      + '<span class="sum-pill ' + riskClass + '">' + esc(RISK[value.risk]) + '</span>'
+      + '<span class="sum-pill sum-u-' + esc(value.urgency) + '">' + esc(URGENCY[value.urgency]) + '</span></div>';
+    if (value.summary) out += '<div class="sum-line">' + esc(value.summary) + '</div>';
+    if (value.problems.length) {
+      out += '<div class="sum-h">重要問題</div><ol class="sum-list">';
+      value.problems.forEach(function (p) {
+        out += '<li><b>' + esc(p.title) + '</b> <span class="sum-st sum-st-' + esc(p.status) + '">' + esc(STATUS[p.status]) + '</span>';
+        if (p.finding) out += '<div class="sum-f">' + esc(p.finding) + '</div>';
+        if (p.basis.length) out += '<div class="sum-b">依據：' + esc(basisText(p.basis)) + '</div>';
+        out += '</li>';
+      });
+      out += '</ol>';
+    }
+    if (value.suggestions.length) {
+      out += '<div class="sum-h">建議</div><ul class="sum-list">';
+      value.suggestions.forEach(function (s) {
+        out += '<li><span class="sum-kind sum-k-' + esc(s.kind) + '">' + esc(KIND[s.kind]) + '</span> <b>' + esc(s.item) + '</b>';
+        if (s.purpose) out += '<div class="sum-f">目的：' + esc(s.purpose) + '</div>';
+        if (s.reason) out += '<div class="sum-f">理由：' + esc(s.reason) + '</div>';
+        if (s.basis.length) out += '<div class="sum-b">依據：' + esc(basisText(s.basis)) + '</div>';
+        out += '</li>';
+      });
+      out += '</ul>';
+    }
+    out += '<div class="sum-h">出院</div><div class="sum-f">'
+      + (value.discharge.consider ? '<b>可考慮出院</b>' : '尚需住院')
+      + (value.discharge.reason ? '：' + esc(value.discharge.reason) : '') + '</div>';
+    return out + '</div>';
+  }
+
+  var api = { parse: parse, crossCheck: crossCheck, flatten: flatten, html: html,
+    RISK: RISK, URGENCY: URGENCY, STATUS: STATUS, KIND: KIND, LIMIT: LIMIT };
+  return api;
+})();
+if (typeof module !== 'undefined' && module.exports) module.exports = EDSummary;
   const KEY = 'edlist:v2', OLD = 'edlist:v1';
   const $ = id => document.getElementById(id);
   const pad = n => String(n).padStart(2, '0');
@@ -825,6 +1033,21 @@
   }
 
   /* ---- composer with token-filtered snippets ---------------------------- */
+  // A pasted AI summary (JSON) becomes a note on the patient whose chart number it names.
+  // A mismatch is refused rather than attached to the wrong patient.
+  function importSummary(patient, raw) {
+    const r = EDSummary.parse(raw);
+    if (!r.ok) { toast('無法匯入：' + r.errors[0]); return false; }
+    if (r.value.chart !== patient.chart) {
+      toast(`病歷號不符：摘要是 ${r.value.chart}，這位病人是 ${patient.chart}`);
+      return false;
+    }
+    patient.notes.unshift({id: uid(), t: Date.now(), text: EDSummary.flatten(r.value),
+      important: r.value.risk === 'high', summary: r.value});
+    if (r.warnings.length) toast('已匯入。' + r.warnings.join('；'));
+    return true;
+  }
+
   function composer(patient, which) {
     const wrap = document.createElement('div');
     const add = document.createElement('div');
@@ -844,6 +1067,7 @@
       if (!value) return;
       const stamp = Date.now();
       if (which === 'todos') patient.todos.unshift({id: uid(), t: stamp, text: value, star: false, done: false});
+      else if (value.startsWith('{')) { if (!importSummary(patient, value)) return; }
       else patient.notes.unshift({id: uid(), t: stamp, text: value, important: false});
       input.value = '';
       save(); drawDetail();
@@ -960,7 +1184,8 @@
       star.onclick = () => { note.important = !note.important; save(); drawDetail(); };
       const text = document.createElement('div');
       text.className = 'txt';
-      text.innerHTML = esc(note.text) + `<div class="when num">${clock(note.t)}</div>`;
+      text.innerHTML = (note.summary ? EDSummary.html(note.summary, esc) : esc(note.text))
+        + `<div class="when num">${clock(note.t)}</div>`;
       const kill = document.createElement('button');
       kill.className = 'kill';
       kill.textContent = '×';
