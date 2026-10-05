@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="app-version" content="1.1.0">
+<meta name="app-version" content="1.3.0">
 <meta name="theme-color" content="#faf6f0">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -203,6 +203,7 @@
     z-index:70;max-width:88vw;text-align:center;box-shadow:0 4px 18px var(--shadow)}
   .data-tools{padding:22px var(--pad) calc(36px + env(safe-area-inset-bottom,0));text-align:center}
   .data-tools button{background:transparent;color:var(--dim);font-size:12px;text-decoration:underline}
+  .data-tools .tool-link{color:var(--dim);font-size:12px;text-decoration:underline}
   @media (prefers-reduced-motion:reduce){button:active{transform:none}}
 </style>
 </head>
@@ -222,6 +223,8 @@
     <input id="q" type="search" placeholder="搜尋：姓名、床號、科別、筆記、待辦…" autocomplete="off">
     <button id="scan">掃描</button>
     <button id="paste" title="文字備援">貼上</button>
+    <button id="sumImport" title="匯入 AI 摘要檔（JSON）">摘要檔</button>
+    <input type="file" id="sumFile" accept=".json,application/json" hidden>
   </div>
   <div class="filters" id="filters" hidden>
     <div class="zones" id="zones" hidden></div>
@@ -230,7 +233,7 @@
 </header>
 
 <main id="board"></main>
-<footer class="data-tools"><button id="clearData" type="button">清除本機資料</button></footer>
+<footer class="data-tools"><a class="tool-link" href="summary-print.html">摘要列印工具</a> · <button id="clearData" type="button">清除本機資料</button></footer>
 <div class="page" id="detail"></div>
 
 <div class="sheet" id="sheet">
@@ -242,6 +245,17 @@
       <button style="flex:1" id="useManual">匯入貼上的文字</button>
       <button style="flex:1" id="closeSheet">取消</button>
     </div>
+  </div>
+</div>
+
+<div class="sheet" id="sumSheet">
+  <div class="cap" style="flex:1;justify-content:center">
+    <div class="prog num">匯入 AI 摘要</div>
+    <p style="font-size:12px;color:var(--dim);margin:0">把 AI 輸出的整份 JSON 貼在下面，或選擇 JSON 檔。依床號配對，床號取第一段（例如 T09(候2) 配對 T09）。</p>
+    <textarea id="sumText" placeholder="把 AI 的 JSON 整段貼在這裡" spellcheck="false" style="height:40vh;font-size:12px"></textarea>
+    <button id="sumApply" type="button">匯入貼上的內容</button>
+    <button id="sumPick" type="button">選擇 JSON 檔…</button>
+    <button id="sumClose" type="button">取消</button>
   </div>
 </div>
 
@@ -260,11 +274,13 @@ var EDSummary = (function () {
   };
   var STATUS = { untreated: '未處理', in_progress: '處理中', addressed: '已處理' };
   var KIND = { test: '檢查', treatment: '處置', drug: '用藥' };
-  var MAX_PROBLEMS = 4, MAX_SUGGESTIONS = 5, MAX_BASIS = 6;
+  var MAX_PROBLEMS = 4, MAX_SUGGESTIONS = 5, MAX_BASIS = 3;
   // Field length budgets. They keep a card to half an A4 page; longer text is cut and the cut is reported.
   var LIMIT = {
     bed: 12, summary: 60, title: 40, finding: 90, item: 40, purpose: 50, reason: 80,
     dischargeReason: 60, basisItem: 40, basisValue: 40,
+    // Whole-patient budget. Each basis counts as about 25 characters on the printed line.
+    total: 1000,
   };
 
   function oneOf(value, table) {
@@ -272,19 +288,17 @@ var EDSummary = (function () {
   }
 
   // Trims one text field to its budget. A cut is reported, never silent.
+  // Text is never cut. A field past its suggested length gets a note; the full text is kept.
   function fit(value, max, label, warnings) {
     var s = typeof value === 'string' ? value.trim() : '';
-    if (s.length > max) {
-      warnings.push(label + ' 超過 ' + max + ' 字，已截短');
-      return s.slice(0, max);
-    }
+    if (s.length > max) warnings.push(label + ' 超過建議 ' + max + ' 字，請考慮精簡（內容已完整保留）');
     return s;
   }
 
   function basisOf(list, errors, warnings, where) {
     if (!Array.isArray(list)) return [];
-    if (list.length > MAX_BASIS) warnings.push(where + ' 依據超過 ' + MAX_BASIS + ' 筆，只保留前 ' + MAX_BASIS + ' 筆');
-    return list.slice(0, MAX_BASIS).map(function (b) {
+    if (list.length > MAX_BASIS) warnings.push(where + ' 依據 ' + list.length + ' 筆，超過建議的 ' + MAX_BASIS + ' 筆（全部保留）');
+    return list.map(function (b) {
       return {
         date: fit(b && b.date, 10, where + ' 依據日期', warnings),
         time: fit(b && b.time, 8, where + ' 依據時間', warnings),
@@ -299,12 +313,23 @@ var EDSummary = (function () {
     });
   }
 
+  // Reads JSON the way a person pastes it: tolerates a code fence, text before or after the object,
+  // a byte-order mark and trailing commas. Anything else is still an error.
+  function readJson(raw) {
+    var s = String(raw || '').replace(/^﻿/, '').trim();
+    s = s.replace(/^```[a-zA-Z]*\s*/, '').replace(/```\s*$/, '').trim();
+    var a = s.search(/[\[{]/);
+    var b = Math.max(s.lastIndexOf('}'), s.lastIndexOf(']'));
+    if (a >= 0 && b > a) s = s.slice(a, b + 1);
+    s = s.replace(/,\s*([}\]])/g, '$1');
+    return JSON.parse(s);
+  }
+
   // Returns { ok, value, errors, warnings }. ok is false only for problems that make the note meaningless.
   function parse(raw) {
     var errors = [], warnings = [];
-    var body = String(raw || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
     var data;
-    try { data = JSON.parse(body); } catch (e) {
+    try { data = readJson(raw); } catch (e) {
       return { ok: false, value: null, errors: ['不是有效的 JSON：' + e.message], warnings: warnings };
     }
     if (!data || typeof data !== 'object' || Array.isArray(data)) {
@@ -317,15 +342,15 @@ var EDSummary = (function () {
     if (!urgency) errors.push('urgency 必須是 immediate、today、observe 或 consider_discharge');
 
     var problems = Array.isArray(data.problems) ? data.problems : [];
-    if (problems.length > MAX_PROBLEMS) warnings.push('問題超過 ' + MAX_PROBLEMS + ' 項，只保留前 ' + MAX_PROBLEMS + ' 項');
+    if (problems.length > MAX_PROBLEMS) warnings.push('問題 ' + problems.length + ' 項，超過建議的 ' + MAX_PROBLEMS + ' 項（全部保留，請考慮精簡）');
     var suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
-    if (suggestions.length > MAX_SUGGESTIONS) warnings.push('建議超過 ' + MAX_SUGGESTIONS + ' 項，只保留前 ' + MAX_SUGGESTIONS + ' 項');
+    if (suggestions.length > MAX_SUGGESTIONS) warnings.push('建議 ' + suggestions.length + ' 項，超過建議的 ' + MAX_SUGGESTIONS + ' 項（全部保留，請考慮精簡）');
 
     var value = {
       schemaVersion: 1, chart: chart, bed: fit(data.bed, LIMIT.bed, '床號', warnings),
       risk: risk, urgency: urgency,
       summary: fit(data.summary, LIMIT.summary, '總結', warnings),
-      problems: problems.slice(0, MAX_PROBLEMS).map(function (p, i) {
+      problems: problems.map(function (p, i) {
         var where = '問題' + (i + 1);
         return {
           title: fit(p && p.title, LIMIT.title, where + ' 名稱', warnings),
@@ -334,7 +359,7 @@ var EDSummary = (function () {
           basis: basisOf(p && p.basis, errors, warnings, where),
         };
       }).filter(function (p) { return p.title; }),
-      suggestions: suggestions.slice(0, MAX_SUGGESTIONS).map(function (s, i) {
+      suggestions: suggestions.map(function (s, i) {
         var where = '建議' + (i + 1);
         var kind = oneOf(s && s.kind, KIND);
         if (!kind) errors.push(where + '：kind 必須是 test、treatment 或 drug');
@@ -352,6 +377,10 @@ var EDSummary = (function () {
       },
       generatedAt: fit(data.generatedAt, 30, '時間', warnings),
     };
+    var size = (value.summary + value.discharge.reason).length
+      + value.problems.reduce(function (n, p) { return n + p.title.length + p.finding.length + p.basis.length * 25; }, 0)
+      + value.suggestions.reduce(function (n, s) { return n + s.item.length + s.purpose.length + s.reason.length + s.basis.length * 25; }, 0);
+    if (size > LIMIT.total) warnings.push('篇幅偏長（約 ' + size + ' 字），列印可能需大幅縮小字級，建議精簡');
     if (value.problems.length === 0) warnings.push('沒有問題條目');
     return { ok: errors.length === 0, value: value, errors: errors, warnings: warnings };
   }
@@ -398,7 +427,9 @@ var EDSummary = (function () {
   }
 
   // Card markup. Every value goes through esc(), so the note cannot inject markup.
-  function html(value, esc) {
+  // opts.columns puts problems and suggestions side by side (print only; the phone keeps one column).
+  function html(value, esc, opts) {
+    var cols = !!(opts && opts.columns);
     var riskClass = value.risk === 'high' ? 'sum-r-high' : value.risk === 'medium' ? 'sum-r-mid' : 'sum-r-low';
     var out = '<div class="sum">';
     out += '<div class="sum-head">'
@@ -406,6 +437,7 @@ var EDSummary = (function () {
       + '<span class="sum-pill ' + riskClass + '">' + esc(RISK[value.risk]) + '</span>'
       + '<span class="sum-pill sum-u-' + esc(value.urgency) + '">' + esc(URGENCY[value.urgency]) + '</span></div>';
     if (value.summary) out += '<div class="sum-line">' + esc(value.summary) + '</div>';
+    if (cols) out += '<div class="sum-cols"><div class="sum-col">';
     if (value.problems.length) {
       out += '<div class="sum-h">重要問題</div><ol class="sum-list">';
       value.problems.forEach(function (p) {
@@ -416,6 +448,7 @@ var EDSummary = (function () {
       });
       out += '</ol>';
     }
+    if (cols) out += '</div><div class="sum-col">';
     if (value.suggestions.length) {
       out += '<div class="sum-h">建議</div><ul class="sum-list">';
       value.suggestions.forEach(function (s) {
@@ -427,14 +460,164 @@ var EDSummary = (function () {
       });
       out += '</ul>';
     }
+    if (cols) out += '</div></div>';
     out += '<div class="sum-h">出院</div><div class="sum-f">'
       + (value.discharge.consider ? '<b>可考慮出院</b>' : '尚需住院')
       + (value.discharge.reason ? '：' + esc(value.discharge.reason) : '') + '</div>';
     return out + '</div>';
   }
 
-  var api = { parse: parse, crossCheck: crossCheck, flatten: flatten, html: html,
-    RISK: RISK, URGENCY: URGENCY, STATUS: STATUS, KIND: KIND, LIMIT: LIMIT };
+  // One file holds many patients: {"schemaVersion":1,"generatedAt":"…","summaries":[ … ]} or a bare array.
+  // Each entry is checked on its own, so one bad entry does not stop the others.
+  function parseBatch(raw) {
+    var data;
+    try {
+      data = readJson(raw);
+    } catch (e) {
+      return { ok: false, errors: ['不是有效的 JSON：' + e.message], items: [] };
+    }
+    var list = Array.isArray(data) ? data : (data && Array.isArray(data.summaries) ? data.summaries : null);
+    if (!list) return { ok: false, errors: ['檔案需為 {"summaries":[…]} 或摘要陣列'], items: [] };
+    return {
+      ok: true, errors: [],
+      items: list.map(function (s, i) {
+        var r = parse(JSON.stringify(s === undefined ? null : s));
+        return {
+          index: i + 1, bed: r.value ? r.value.bed : '', ok: r.ok, value: r.ok ? r.value : null,
+          errors: r.errors, warnings: r.warnings,
+        };
+      }),
+    };
+  }
+
+  // Printable pages: two patients per A4 sheet, each card half a page, the bottom sixth left for notes.
+  // The writing area takes whatever height the content leaves, never less than a sixth of the page.
+  // The chart number is never printed; the bed is the identifier on paper.
+  var PRINT_CSS = [
+    '@page { size: A4; margin: 0 }',
+    '* { box-sizing: border-box }',
+    'html, body { margin: 0; background: #fff; color: #111 }',
+    'body { font: 9.5pt/1.35 "Noto Sans TC","Microsoft JhengHei",sans-serif }',
+    '.page { width: 210mm; height: 297mm; display: flex; flex-direction: column; overflow: hidden; break-after: page }',
+    '.page:last-child { break-after: auto }',
+    '.card { height: 148.5mm; padding: 5mm 9mm 0; display: flex; flex-direction: column; overflow: hidden }',
+    '.card + .card { border-top: 0.3mm dashed #999 }',
+    '.hd { display: flex; align-items: center; gap: 3mm; flex-wrap: wrap; margin-bottom: 1.5mm; padding-bottom: 1mm; border-bottom: 0.4mm solid #333 }',
+    '.bed { font-size: 14pt; font-weight: 700; margin-right: 1mm }',
+    '.gen { font-size: 8pt; color: #666 }',
+    '.warn { color: #b00; font-weight: 700; font-size: 8.5pt; margin-left: auto }',
+    '.body { flex: 0 0 auto }',
+    '.write { flex: 1 1 0; min-height: 0; border-top: 0.2mm dotted #888; padding-top: 1mm; font-size: 7.5pt; color: #888;',
+    '  background: repeating-linear-gradient(to bottom, transparent 0 6.4mm, #d0d0d0 6.4mm 6.6mm);',
+    '  -webkit-print-color-adjust: exact; print-color-adjust: exact }',
+    '.sum-bed { display: none }',
+    '.sum-cols { display: grid; grid-template-columns: 1fr 1fr; column-gap: 4mm; align-items: start }',
+    '.sum-col { min-width: 0 }',
+    '.sum-head { display: flex; gap: 2mm; margin-bottom: 1mm; flex-wrap: wrap }',
+    '.sum-pill { font-size: 8.5pt; font-weight: 700; padding: 0 2.5mm; border: 0.3mm solid #333; border-radius: 3mm }',
+    '.sum-r-high, .sum-u-immediate { background: #f4d6d1; border-color: #b3261e; color: #8a1c14 }',
+    '.sum-r-mid, .sum-u-today { background: #fbe9c4; border-color: #b8741a; color: #7a4a0a }',
+    '.sum-u-observe { background: #dcebf5; border-color: #3a6ea5; color: #24527a }',
+    '.sum-r-low, .sum-u-consider_discharge { background: #dff0e2; border-color: #4f7f3a; color: #355a25 }',
+    '.sum-line { font-weight: 700; font-size: 10pt; margin: 0.5mm 0 1mm }',
+    '.sum-h { font-weight: 700; border-bottom: 0.2mm solid #bbb; margin-top: 1.2mm; font-size: 9pt }',
+    '.sum ol.sum-list { list-style: decimal; margin: 0.4mm 0 0; padding-left: 5mm }',
+    '.sum ul.sum-list { list-style: disc; margin: 0.4mm 0 0; padding-left: 5mm }',
+    '.sum li { margin: 0 0 0.8mm }',
+    '.sum-f { margin-top: 0.2mm }',
+    '.sum-b { font-size: 7.8pt; color: #555; margin-top: 0.2mm }',
+    '.sum-st { font-size: 7.5pt; font-weight: 700; border: 0.2mm solid currentColor; padding: 0 1.2mm; border-radius: 1mm; margin-left: 1mm }',
+    '.sum-st-untreated { color: #b3261e } .sum-st-in_progress { color: #b8741a } .sum-st-addressed { color: #355a25 }',
+    '.sum-kind { font-size: 7.5pt; font-weight: 700; padding: 0 1.2mm; border-radius: 1mm; background: #333; color: #fff; margin-right: 1mm }',
+    '.sum-k-test { background: #3a6ea5 } .sum-k-treatment { background: #5b4bb0 } .sum-k-drug { background: #b8741a }',
+  ].join('\n');
+
+  // Runs in the printed file. A card whose text does not fit its area is marked in print, never clipped silently.
+  // Fit each card before printing: content that runs past the half page is scaled down in steps
+  // (down to 75%), so nothing is ever cut off. Only if it still does not fit is the card marked in print.
+  // Runs in the printed file. Each patient is measured in the browser and placed:
+  // two to a sheet when the card fits half a page at 75% size or more, otherwise one to a full sheet.
+  // Text is scaled to fit, never cut. The writing area gets whatever height is left.
+  var PRINT_LAYOUT = [
+    '(function () {',
+    '  var HALF = 148.5, FULL = 297, MIN_HALF = 0.75, MIN_FULL = 0.6;',
+    "  var src = document.getElementById('src');",
+    "  var out = document.getElementById('out');",
+    "  var probe = document.createElement('div');",
+    "  probe.style.cssText = 'position:absolute;left:-20000px;top:0;width:210mm';",
+    '  document.body.appendChild(probe);',
+    '  function fit(card, heightMm, minZoom) {',
+    "    card.style.height = heightMm + 'mm';",
+    "    var b = card.querySelector('.body'), z = 1;",
+    '    b.style.zoom = 1;',
+    '    while (card.scrollHeight > card.clientHeight + 1 && z > minZoom) {',
+    '      z = Math.max(minZoom, Math.round((z - 0.05) * 100) / 100);',
+    '      b.style.zoom = z;',
+    '    }',
+    '    return card.scrollHeight > card.clientHeight + 1 ? -1 : z;',
+    '  }',
+    "  var cards = Array.prototype.slice.call(src.querySelectorAll('.card'));",
+    '  cards.forEach(function (card) {',
+    '    probe.appendChild(card);',
+    "    var z = fit(card, HALF, MIN_HALF), size = 'half';",
+    "    if (z < 0) { z = fit(card, FULL, MIN_FULL); size = 'full'; }",
+    "    card.setAttribute('data-size', size);",
+    "    card.setAttribute('data-zoom', z);",
+    '    probe.removeChild(card);',
+    '  });',
+    '  var page = null, used = 0;',
+    '  cards.forEach(function (card) {',
+    "    var full = card.getAttribute('data-size') === 'full';",
+    "    var z = parseFloat(card.getAttribute('data-zoom'));",
+    '    if (full || !page || used === 2) {',
+    "      page = document.createElement('section');",
+    "      page.className = 'page';",
+    '      out.appendChild(page);',
+    '      used = 0;',
+    '    }',
+    '    used += full ? 2 : 1;',
+    "    card.style.height = (full ? FULL : HALF) + 'mm';",
+    '    page.appendChild(card);',
+    "    var hd = card.querySelector('.hd');",
+    '    if (z < 0) {',
+    "      card.querySelector('.body').style.zoom = MIN_FULL;",
+    "      var w = document.createElement('div');",
+    "      w.className = 'warn';",
+    "      w.textContent = '內容超過整頁，已縮到最小字級仍放不下，請精簡後重新產生';",
+    '      hd.appendChild(w);',
+    '    } else if (z < 1) {',
+    "      var n = document.createElement('div');",
+    "      n.className = 'gen';",
+    "      n.textContent = '字級 ' + Math.round(z * 100) + '%';",
+    '      hd.appendChild(n);',
+    '    }',
+    '  });',
+    '  probe.parentNode.removeChild(probe);',
+    '})();',
+  ].join('\n');
+
+  function printDoc(values) {
+    var esc = function (s) {
+      return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    };
+    var cards = values.map(function (v) {
+      var made = v.generatedAt ? '<span class="gen">' + esc(v.generatedAt.replace('T', ' ')) + '</span>' : '';
+      return '<div class="card"><div class="hd"><span class="bed">'
+        + esc(v.bed ? '床 ' + v.bed : '（無床號）') + '</span>' + made + '</div>'
+        + '<div class="body">' + html(v, esc, { columns: true }) + '</div><div class="write">筆記</div></div>';
+    });
+    // The cards are placed into sheets by the script in the browser, which measures each one first.
+    return '<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">'
+      + '<meta name="viewport" content="width=device-width,initial-scale=1"><title>急診重點摘要</title>'
+      + '<style>' + PRINT_CSS + '</style></head><body>'
+      + '<div id="src" style="display:none">' + cards.join('') + '</div><div id="out"></div>'
+      + '<' + 'script>' + PRINT_LAYOUT + '<\/script></body></html>';
+  }
+
+  var api = { parse: parse, parseBatch: parseBatch, crossCheck: crossCheck, flatten: flatten, html: html,
+    printDoc: printDoc, RISK: RISK, URGENCY: URGENCY, STATUS: STATUS, KIND: KIND, LIMIT: LIMIT };
   return api;
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = EDSummary;
@@ -546,6 +729,68 @@ if (typeof module !== 'undefined' && module.exports) module.exports = EDSummary;
     if (terms.some(term => fields.some(value => value.includes(term)))) return 3;
     return 4;
   }
+
+  /* ---- AI summary batch --------------------------------------------------
+     One JSON file holds summaries for many beds. Each summary goes to the patient
+     currently in that bed. A bed held by two current patients is not guessed at. */
+  // A bed is matched on its leading part only: "T09(候2)" and "T09" both match on "T09".
+  const matchKey = bed => {
+    const t = String(bed || '').trim();
+    const m = t.match(/^[^\d(（\s]*\d+/);
+    return (m ? m[0] : t.split(/[(（\s]/)[0]).toUpperCase();
+  };
+  function importBatch(raw) {
+    const batch = EDSummary.parseBatch(raw);
+    if (!batch.ok) return {error: batch.errors[0]};
+    const current = Object.values(state.patients).filter(p => !p.left);
+    const report = {done: [], unmatched: [], ambiguous: [], invalid: []};
+    for (const item of batch.items) {
+      if (!item.ok) { report.invalid.push(`第 ${item.index} 筆：${item.errors[0]}`); continue; }
+      const key = matchKey(item.bed);
+      const hits = current.filter(p => key && matchKey(p.bed) === key);
+      if (hits.length === 0) { report.unmatched.push(item.bed || `第 ${item.index} 筆`); continue; }
+      if (hits.length > 1) { report.ambiguous.push(item.bed); continue; }
+      const patient = hits[0];
+      item.value.chart = patient.chart;
+      // The newest summary replaces the previous AI summary for this patient; typed notes are kept.
+      patient.notes = patient.notes.filter(n => !n.summary);
+      patient.notes.unshift({id: uid(), t: Date.now(), text: EDSummary.flatten(item.value),
+        important: item.value.risk === 'high', summary: item.value});
+      report.done.push(item.bed);
+    }
+    save(); render();
+    return report;
+  }
+  function reportText(report) {
+    if (report.error) return '無法匯入：' + report.error;
+    const lines = [`已匯入 ${report.done.length} 位${report.done.length ? '（床 ' + report.done.join('、') + '）' : ''}`];
+    if (report.unmatched.length) lines.push(`目前沒有這些床號的病人：${report.unmatched.join('、')}`);
+    if (report.ambiguous.length) lines.push(`床號重複，無法判斷：${report.ambiguous.join('、')}`);
+    if (report.invalid.length) lines.push(`格式有誤未匯入：\n${report.invalid.join('\n')}`);
+    return lines.join('\n');
+  }
+  // The summary sheet takes the whole JSON as pasted, or a file. Nothing is attached until the
+  // report has been shown, and a bad paste leaves the text in place so it can be fixed.
+  const importText = text => {
+    const report = importBatch(text);
+    alert(reportText(report));
+    if (!report.error && report.done.length) {
+      $('sumText').value = '';
+      $('sumSheet').classList.remove('on');
+    }
+  };
+  $('sumImport').onclick = () => { $('sumSheet').classList.add('on'); $('sumText').focus(); };
+  $('sumClose').onclick = () => $('sumSheet').classList.remove('on');
+  $('sumApply').onclick = () => importText($('sumText').value);
+  $('sumPick').onclick = () => $('sumFile').click();
+  $('sumFile').onchange = () => {
+    const file = $('sumFile').files[0];
+    $('sumFile').value = '';
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => importText(reader.result);
+    reader.readAsText(file, 'utf-8');
+  };
 
   /* ---- merge ------------------------------------------------------------ */
   function merge(incoming) {
@@ -1069,6 +1314,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = EDSummary;
       if (!value) return;
       const stamp = Date.now();
       if (which === 'todos') patient.todos.unshift({id: uid(), t: stamp, text: value, star: false, done: false});
+      else if (/"summaries"/.test(value)) { input.value = ''; alert(reportText(importBatch(value))); return; }
       else if (value.startsWith('{')) { if (!importSummary(patient, value)) return; }
       else patient.notes.unshift({id: uid(), t: stamp, text: value, important: false});
       input.value = '';

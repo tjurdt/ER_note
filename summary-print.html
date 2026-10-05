@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>摘要列印工具</title>
+<style>
+  :root{--ink:#1c2831;--dim:#5b6a75;--line:#d8e0e6;--bg:#f5f7f9;--accent:#2d3e50}
+  body{margin:0;font:15px/1.6 -apple-system,"Noto Sans TC","Microsoft JhengHei",system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+  main{max-width:720px;margin:0 auto;padding:20px 16px 48px}
+  h1{font-size:20px;margin:0 0 6px}
+  p{color:var(--dim);margin:4px 0 14px}
+  .panel{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
+  input[type=file]{font:inherit}
+  textarea{width:100%;font:13px/1.4 ui-monospace,Consolas,monospace;padding:8px;border:1px solid var(--line);border-radius:8px;box-sizing:border-box;margin:6px 0}
+  button{font:inherit;padding:9px 14px;border:0;border-radius:8px;background:var(--accent);color:#fff;cursor:pointer;margin-right:8px}
+  button:disabled{background:#9aa6b0;cursor:not-allowed}
+  .ok{color:#355a25;font-weight:600}
+  .bad{color:#b3261e;font-weight:600}
+  .warn{color:#7a4a0a}
+  ul{padding-left:18px;margin:6px 0}
+  li{margin:2px 0}
+</style>
+</head>
+<body>
+<main>
+  <h1>摘要列印工具</h1>
+  <p>上傳 AI 產生的摘要 JSON 檔，產生一個可列印的 HTML。資料只在這台電腦上處理，不會上傳到任何地方。</p>
+
+  <div class="panel">
+    <input type="file" id="file" accept=".json,application/json">
+  </div>
+
+  <div class="panel">
+    <p>或直接把 AI 輸出的 JSON 貼在這裡，不需要存成檔案：</p>
+    <textarea id="paste" rows="8" spellcheck="false" placeholder="把 AI 的 JSON 整段貼在這裡…"></textarea>
+    <button id="usePaste">使用貼上的內容</button>
+  </div>
+
+  <div class="panel" id="report" hidden></div>
+
+  <div class="panel">
+    <button id="download" disabled>下載列印頁（HTML）</button>
+    <button id="preview" disabled>開啟列印預覽</button>
+    <p>列印時請在瀏覽器的列印對話框選擇「A4」、邊界「無」，並勾選「背景圖形」，才會正確換頁並印出手寫格線。</p>
+  </div>
+</main>
+
+<script>// AI summary contract: parse, validate, cross-check against the exported TXT, and render.
+// Pure functions only. Inlined into the page by build.mjs and loaded by node tests and the desktop tools.
+// The format is defined in the summary knowledge document; keep the lists and limits below in step with it.
+var EDSummary = (function () {
+  var RISK = { high: '高風險', medium: '中風險', low: '低風險' };
+  var URGENCY = {
+    immediate: '需立即處理', today: '今日處理', observe: '可觀察', consider_discharge: '可考慮出院',
+  };
+  var STATUS = { untreated: '未處理', in_progress: '處理中', addressed: '已處理' };
+  var KIND = { test: '檢查', treatment: '處置', drug: '用藥' };
+  var MAX_PROBLEMS = 4, MAX_SUGGESTIONS = 5, MAX_BASIS = 3;
+  // Field length budgets. They keep a card to half an A4 page; longer text is cut and the cut is reported.
+  var LIMIT = {
+    bed: 12, summary: 60, title: 40, finding: 90, item: 40, purpose: 50, reason: 80,
+    dischargeReason: 60, basisItem: 40, basisValue: 40,
+    // Whole-patient budget. Each basis counts as about 25 characters on the printed line.
+    total: 1000,
+  };
+
+  function oneOf(value, table) {
+    return Object.prototype.hasOwnProperty.call(table, value) ? value : '';
+  }
+
+  // Trims one text field to its budget. A cut is reported, never silent.
+  // Text is never cut. A field past its suggested length gets a note; the full text is kept.
+  function fit(value, max, label, warnings) {
+    var s = typeof value === 'string' ? value.trim() : '';
+    if (s.length > max) warnings.push(label + ' 超過建議 ' + max + ' 字，請考慮精簡（內容已完整保留）');
+    return s;
+  }
+
+  function basisOf(list, errors, warnings, where) {
+    if (!Array.isArray(list)) return [];
+    if (list.length > MAX_BASIS) warnings.push(where + ' 依據 ' + list.length + ' 筆，超過建議的 ' + MAX_BASIS + ' 筆（全部保留）');
+    return list.map(function (b) {
+      return {
+        date: fit(b && b.date, 10, where + ' 依據日期', warnings),
+        time: fit(b && b.time, 8, where + ' 依據時間', warnings),
+        source: fit(b && b.source, 20, where + ' 依據來源', warnings),
+        item: fit(b && b.item, LIMIT.basisItem, where + ' 依據項目', warnings),
+        value: fit(b && b.value, LIMIT.basisValue, where + ' 依據數值', warnings),
+      };
+    }).filter(function (b) {
+      if (!b.date) { errors.push(where + '：依據缺少日期'); return false; }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(b.date)) errors.push(where + '：日期格式需為 YYYY-MM-DD（' + b.date + '）');
+      return true;
+    });
+  }
+
+  // Reads JSON the way a person pastes it: tolerates a code fence, text before or after the object,
+  // a byte-order mark and trailing commas. Anything else is still an error.
+  function readJson(raw) {
+    var s = String(raw || '').replace(/^﻿/, '').trim();
+    s = s.replace(/^```[a-zA-Z]*\s*/, '').replace(/```\s*$/, '').trim();
+    var a = s.search(/[\[{]/);
+    var b = Math.max(s.lastIndexOf('}'), s.lastIndexOf(']'));
+    if (a >= 0 && b > a) s = s.slice(a, b + 1);
+    s = s.replace(/,\s*([}\]])/g, '$1');
+    return JSON.parse(s);
+  }
+
+  // Returns { ok, value, errors, warnings }. ok is false only for problems that make the note meaningless.
+  function parse(raw) {
+    var errors = [], warnings = [];
+    var data;
+    try { data = readJson(raw); } catch (e) {
+      return { ok: false, value: null, errors: ['不是有效的 JSON：' + e.message], warnings: warnings };
+    }
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      return { ok: false, value: null, errors: ['最外層必須是 JSON 物件'], warnings: warnings };
+    }
+    var chart = fit(data.chart, 20, '病歷號', warnings);
+    // chart may be empty: the phone attaches such a summary to the patient it is pasted into.
+    var risk = oneOf(data.risk, RISK), urgency = oneOf(data.urgency, URGENCY);
+    if (!risk) errors.push('risk 必須是 high、medium 或 low');
+    if (!urgency) errors.push('urgency 必須是 immediate、today、observe 或 consider_discharge');
+
+    var problems = Array.isArray(data.problems) ? data.problems : [];
+    if (problems.length > MAX_PROBLEMS) warnings.push('問題 ' + problems.length + ' 項，超過建議的 ' + MAX_PROBLEMS + ' 項（全部保留，請考慮精簡）');
+    var suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
+    if (suggestions.length > MAX_SUGGESTIONS) warnings.push('建議 ' + suggestions.length + ' 項，超過建議的 ' + MAX_SUGGESTIONS + ' 項（全部保留，請考慮精簡）');
+
+    var value = {
+      schemaVersion: 1, chart: chart, bed: fit(data.bed, LIMIT.bed, '床號', warnings),
+      risk: risk, urgency: urgency,
+      summary: fit(data.summary, LIMIT.summary, '總結', warnings),
+      problems: problems.map(function (p, i) {
+        var where = '問題' + (i + 1);
+        return {
+          title: fit(p && p.title, LIMIT.title, where + ' 名稱', warnings),
+          finding: fit(p && p.finding, LIMIT.finding, where + ' 發現', warnings),
+          status: oneOf(p && p.status, STATUS) || 'untreated',
+          basis: basisOf(p && p.basis, errors, warnings, where),
+        };
+      }).filter(function (p) { return p.title; }),
+      suggestions: suggestions.map(function (s, i) {
+        var where = '建議' + (i + 1);
+        var kind = oneOf(s && s.kind, KIND);
+        if (!kind) errors.push(where + '：kind 必須是 test、treatment 或 drug');
+        return {
+          kind: kind,
+          item: fit(s && s.item, LIMIT.item, where + ' 名稱', warnings),
+          purpose: fit(s && s.purpose, LIMIT.purpose, where + ' 目的', warnings),
+          reason: fit(s && s.reason, LIMIT.reason, where + ' 理由', warnings),
+          basis: basisOf(s && s.basis, errors, warnings, where),
+        };
+      }).filter(function (s) { return s.item; }),
+      discharge: {
+        consider: !!(data.discharge && data.discharge.consider === true),
+        reason: fit(data.discharge && data.discharge.reason, LIMIT.dischargeReason, '出院理由', warnings),
+      },
+      generatedAt: fit(data.generatedAt, 30, '時間', warnings),
+    };
+    var size = (value.summary + value.discharge.reason).length
+      + value.problems.reduce(function (n, p) { return n + p.title.length + p.finding.length + p.basis.length * 25; }, 0)
+      + value.suggestions.reduce(function (n, s) { return n + s.item.length + s.purpose.length + s.reason.length + s.basis.length * 25; }, 0);
+    if (size > LIMIT.total) warnings.push('篇幅偏長（約 ' + size + ' 字），列印可能需大幅縮小字級，建議精簡');
+    if (value.problems.length === 0) warnings.push('沒有問題條目');
+    return { ok: errors.length === 0, value: value, errors: errors, warnings: warnings };
+  }
+
+  // Every basis date, value and item should appear verbatim in the exported source text.
+  // Anything that does not is reported, so an invented date or number cannot pass unnoticed.
+  function crossCheck(value, source) {
+    var src = String(source || ''), low = src.toLowerCase(), issues = [];
+    function check(b, where) {
+      if (src.indexOf(b.date) < 0) issues.push(where + '：日期 ' + b.date + ' 不在原始資料中');
+      if (b.value && src.indexOf(b.value) < 0) issues.push(where + '：數值 ' + b.value + ' 不在原始資料中');
+      if (b.item && low.indexOf(b.item.toLowerCase()) < 0) issues.push(where + '：項目 ' + b.item + ' 不在原始資料中');
+    }
+    value.problems.forEach(function (p, i) { p.basis.forEach(function (b) { check(b, '問題' + (i + 1)); }); });
+    value.suggestions.forEach(function (s, i) { s.basis.forEach(function (b) { check(b, '建議' + (i + 1)); }); });
+    return issues;
+  }
+
+  function basisText(list) {
+    return list.map(function (b) {
+      return [b.date, b.time, b.source, b.item, b.value].filter(Boolean).join(' ');
+    }).join('；');
+  }
+
+  // Plain-text form, used for search and as the fallback text of the note.
+  function flatten(value) {
+    var lines = ['[' + (RISK[value.risk] || '') + '｜' + (URGENCY[value.urgency] || '') + ']'
+      + (value.bed ? ' 床 ' + value.bed : '')];
+    if (value.summary) lines.push(value.summary);
+    value.problems.forEach(function (p, i) {
+      lines.push((i + 1) + '. ' + p.title + '（' + STATUS[p.status] + '）');
+      if (p.finding) lines.push('   ' + p.finding);
+      if (p.basis.length) lines.push('   依據：' + basisText(p.basis));
+    });
+    value.suggestions.forEach(function (s) {
+      lines.push('・[' + KIND[s.kind] + '] ' + s.item);
+      if (s.purpose) lines.push('   目的：' + s.purpose);
+      if (s.reason) lines.push('   理由：' + s.reason);
+      if (s.basis.length) lines.push('   依據：' + basisText(s.basis));
+    });
+    lines.push('出院：' + (value.discharge.consider ? '可考慮' : '尚需住院')
+      + (value.discharge.reason ? '；' + value.discharge.reason : ''));
+    return lines.join('\n');
+  }
+
+  // Card markup. Every value goes through esc(), so the note cannot inject markup.
+  // opts.columns puts problems and suggestions side by side (print only; the phone keeps one column).
+  function html(value, esc, opts) {
+    var cols = !!(opts && opts.columns);
+    var riskClass = value.risk === 'high' ? 'sum-r-high' : value.risk === 'medium' ? 'sum-r-mid' : 'sum-r-low';
+    var out = '<div class="sum">';
+    out += '<div class="sum-head">'
+      + (value.bed ? '<span class="sum-bed">床 ' + esc(value.bed) + '</span>' : '')
+      + '<span class="sum-pill ' + riskClass + '">' + esc(RISK[value.risk]) + '</span>'
+      + '<span class="sum-pill sum-u-' + esc(value.urgency) + '">' + esc(URGENCY[value.urgency]) + '</span></div>';
+    if (value.summary) out += '<div class="sum-line">' + esc(value.summary) + '</div>';
+    if (cols) out += '<div class="sum-cols"><div class="sum-col">';
+    if (value.problems.length) {
+      out += '<div class="sum-h">重要問題</div><ol class="sum-list">';
+      value.problems.forEach(function (p) {
+        out += '<li><b>' + esc(p.title) + '</b> <span class="sum-st sum-st-' + esc(p.status) + '">' + esc(STATUS[p.status]) + '</span>';
+        if (p.finding) out += '<div class="sum-f">' + esc(p.finding) + '</div>';
+        if (p.basis.length) out += '<div class="sum-b">依據：' + esc(basisText(p.basis)) + '</div>';
+        out += '</li>';
+      });
+      out += '</ol>';
+    }
+    if (cols) out += '</div><div class="sum-col">';
+    if (value.suggestions.length) {
+      out += '<div class="sum-h">建議</div><ul class="sum-list">';
+      value.suggestions.forEach(function (s) {
+        out += '<li><span class="sum-kind sum-k-' + esc(s.kind) + '">' + esc(KIND[s.kind]) + '</span> <b>' + esc(s.item) + '</b>';
+        if (s.purpose) out += '<div class="sum-f">目的：' + esc(s.purpose) + '</div>';
+        if (s.reason) out += '<div class="sum-f">理由：' + esc(s.reason) + '</div>';
+        if (s.basis.length) out += '<div class="sum-b">依據：' + esc(basisText(s.basis)) + '</div>';
+        out += '</li>';
+      });
+      out += '</ul>';
+    }
+    if (cols) out += '</div></div>';
+    out += '<div class="sum-h">出院</div><div class="sum-f">'
+      + (value.discharge.consider ? '<b>可考慮出院</b>' : '尚需住院')
+      + (value.discharge.reason ? '：' + esc(value.discharge.reason) : '') + '</div>';
+    return out + '</div>';
+  }
+
+  // One file holds many patients: {"schemaVersion":1,"generatedAt":"…","summaries":[ … ]} or a bare array.
+  // Each entry is checked on its own, so one bad entry does not stop the others.
+  function parseBatch(raw) {
+    var data;
+    try {
+      data = readJson(raw);
+    } catch (e) {
+      return { ok: false, errors: ['不是有效的 JSON：' + e.message], items: [] };
+    }
+    var list = Array.isArray(data) ? data : (data && Array.isArray(data.summaries) ? data.summaries : null);
+    if (!list) return { ok: false, errors: ['檔案需為 {"summaries":[…]} 或摘要陣列'], items: [] };
+    return {
+      ok: true, errors: [],
+      items: list.map(function (s, i) {
+        var r = parse(JSON.stringify(s === undefined ? null : s));
+        return {
+          index: i + 1, bed: r.value ? r.value.bed : '', ok: r.ok, value: r.ok ? r.value : null,
+          errors: r.errors, warnings: r.warnings,
+        };
+      }),
+    };
+  }
+
+  // Printable pages: two patients per A4 sheet, each card half a page, the bottom sixth left for notes.
+  // The writing area takes whatever height the content leaves, never less than a sixth of the page.
+  // The chart number is never printed; the bed is the identifier on paper.
+  var PRINT_CSS = [
+    '@page { size: A4; margin: 0 }',
+    '* { box-sizing: border-box }',
+    'html, body { margin: 0; background: #fff; color: #111 }',
+    'body { font: 9.5pt/1.35 "Noto Sans TC","Microsoft JhengHei",sans-serif }',
+    '.page { width: 210mm; height: 297mm; display: flex; flex-direction: column; overflow: hidden; break-after: page }',
+    '.page:last-child { break-after: auto }',
+    '.card { height: 148.5mm; padding: 5mm 9mm 0; display: flex; flex-direction: column; overflow: hidden }',
+    '.card + .card { border-top: 0.3mm dashed #999 }',
+    '.hd { display: flex; align-items: center; gap: 3mm; flex-wrap: wrap; margin-bottom: 1.5mm; padding-bottom: 1mm; border-bottom: 0.4mm solid #333 }',
+    '.bed { font-size: 14pt; font-weight: 700; margin-right: 1mm }',
+    '.gen { font-size: 8pt; color: #666 }',
+    '.warn { color: #b00; font-weight: 700; font-size: 8.5pt; margin-left: auto }',
+    '.body { flex: 0 0 auto }',
+    '.write { flex: 1 1 0; min-height: 0; border-top: 0.2mm dotted #888; padding-top: 1mm; font-size: 7.5pt; color: #888;',
+    '  background: repeating-linear-gradient(to bottom, transparent 0 6.4mm, #d0d0d0 6.4mm 6.6mm);',
+    '  -webkit-print-color-adjust: exact; print-color-adjust: exact }',
+    '.sum-bed { display: none }',
+    '.sum-cols { display: grid; grid-template-columns: 1fr 1fr; column-gap: 4mm; align-items: start }',
+    '.sum-col { min-width: 0 }',
+    '.sum-head { display: flex; gap: 2mm; margin-bottom: 1mm; flex-wrap: wrap }',
+    '.sum-pill { font-size: 8.5pt; font-weight: 700; padding: 0 2.5mm; border: 0.3mm solid #333; border-radius: 3mm }',
+    '.sum-r-high, .sum-u-immediate { background: #f4d6d1; border-color: #b3261e; color: #8a1c14 }',
+    '.sum-r-mid, .sum-u-today { background: #fbe9c4; border-color: #b8741a; color: #7a4a0a }',
+    '.sum-u-observe { background: #dcebf5; border-color: #3a6ea5; color: #24527a }',
+    '.sum-r-low, .sum-u-consider_discharge { background: #dff0e2; border-color: #4f7f3a; color: #355a25 }',
+    '.sum-line { font-weight: 700; font-size: 10pt; margin: 0.5mm 0 1mm }',
+    '.sum-h { font-weight: 700; border-bottom: 0.2mm solid #bbb; margin-top: 1.2mm; font-size: 9pt }',
+    '.sum ol.sum-list { list-style: decimal; margin: 0.4mm 0 0; padding-left: 5mm }',
+    '.sum ul.sum-list { list-style: disc; margin: 0.4mm 0 0; padding-left: 5mm }',
+    '.sum li { margin: 0 0 0.8mm }',
+    '.sum-f { margin-top: 0.2mm }',
+    '.sum-b { font-size: 7.8pt; color: #555; margin-top: 0.2mm }',
+    '.sum-st { font-size: 7.5pt; font-weight: 700; border: 0.2mm solid currentColor; padding: 0 1.2mm; border-radius: 1mm; margin-left: 1mm }',
+    '.sum-st-untreated { color: #b3261e } .sum-st-in_progress { color: #b8741a } .sum-st-addressed { color: #355a25 }',
+    '.sum-kind { font-size: 7.5pt; font-weight: 700; padding: 0 1.2mm; border-radius: 1mm; background: #333; color: #fff; margin-right: 1mm }',
+    '.sum-k-test { background: #3a6ea5 } .sum-k-treatment { background: #5b4bb0 } .sum-k-drug { background: #b8741a }',
+  ].join('\n');
+
+  // Runs in the printed file. A card whose text does not fit its area is marked in print, never clipped silently.
+  // Fit each card before printing: content that runs past the half page is scaled down in steps
+  // (down to 75%), so nothing is ever cut off. Only if it still does not fit is the card marked in print.
+  // Runs in the printed file. Each patient is measured in the browser and placed:
+  // two to a sheet when the card fits half a page at 75% size or more, otherwise one to a full sheet.
+  // Text is scaled to fit, never cut. The writing area gets whatever height is left.
+  var PRINT_LAYOUT = [
+    '(function () {',
+    '  var HALF = 148.5, FULL = 297, MIN_HALF = 0.75, MIN_FULL = 0.6;',
+    "  var src = document.getElementById('src');",
+    "  var out = document.getElementById('out');",
+    "  var probe = document.createElement('div');",
+    "  probe.style.cssText = 'position:absolute;left:-20000px;top:0;width:210mm';",
+    '  document.body.appendChild(probe);',
+    '  function fit(card, heightMm, minZoom) {',
+    "    card.style.height = heightMm + 'mm';",
+    "    var b = card.querySelector('.body'), z = 1;",
+    '    b.style.zoom = 1;',
+    '    while (card.scrollHeight > card.clientHeight + 1 && z > minZoom) {',
+    '      z = Math.max(minZoom, Math.round((z - 0.05) * 100) / 100);',
+    '      b.style.zoom = z;',
+    '    }',
+    '    return card.scrollHeight > card.clientHeight + 1 ? -1 : z;',
+    '  }',
+    "  var cards = Array.prototype.slice.call(src.querySelectorAll('.card'));",
+    '  cards.forEach(function (card) {',
+    '    probe.appendChild(card);',
+    "    var z = fit(card, HALF, MIN_HALF), size = 'half';",
+    "    if (z < 0) { z = fit(card, FULL, MIN_FULL); size = 'full'; }",
+    "    card.setAttribute('data-size', size);",
+    "    card.setAttribute('data-zoom', z);",
+    '    probe.removeChild(card);',
+    '  });',
+    '  var page = null, used = 0;',
+    '  cards.forEach(function (card) {',
+    "    var full = card.getAttribute('data-size') === 'full';",
+    "    var z = parseFloat(card.getAttribute('data-zoom'));",
+    '    if (full || !page || used === 2) {',
+    "      page = document.createElement('section');",
+    "      page.className = 'page';",
+    '      out.appendChild(page);',
+    '      used = 0;',
+    '    }',
+    '    used += full ? 2 : 1;',
+    "    card.style.height = (full ? FULL : HALF) + 'mm';",
+    '    page.appendChild(card);',
+    "    var hd = card.querySelector('.hd');",
+    '    if (z < 0) {',
+    "      card.querySelector('.body').style.zoom = MIN_FULL;",
+    "      var w = document.createElement('div');",
+    "      w.className = 'warn';",
+    "      w.textContent = '內容超過整頁，已縮到最小字級仍放不下，請精簡後重新產生';",
+    '      hd.appendChild(w);',
+    '    } else if (z < 1) {',
+    "      var n = document.createElement('div');",
+    "      n.className = 'gen';",
+    "      n.textContent = '字級 ' + Math.round(z * 100) + '%';",
+    '      hd.appendChild(n);',
+    '    }',
+    '  });',
+    '  probe.parentNode.removeChild(probe);',
+    '})();',
+  ].join('\n');
+
+  function printDoc(values) {
+    var esc = function (s) {
+      return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    };
+    var cards = values.map(function (v) {
+      var made = v.generatedAt ? '<span class="gen">' + esc(v.generatedAt.replace('T', ' ')) + '</span>' : '';
+      return '<div class="card"><div class="hd"><span class="bed">'
+        + esc(v.bed ? '床 ' + v.bed : '（無床號）') + '</span>' + made + '</div>'
+        + '<div class="body">' + html(v, esc, { columns: true }) + '</div><div class="write">筆記</div></div>';
+    });
+    // The cards are placed into sheets by the script in the browser, which measures each one first.
+    return '<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">'
+      + '<meta name="viewport" content="width=device-width,initial-scale=1"><title>急診重點摘要</title>'
+      + '<style>' + PRINT_CSS + '</style></head><body>'
+      + '<div id="src" style="display:none">' + cards.join('') + '</div><div id="out"></div>'
+      + '<' + 'script>' + PRINT_LAYOUT + '<\/script></body></html>';
+  }
+
+  var api = { parse: parse, parseBatch: parseBatch, crossCheck: crossCheck, flatten: flatten, html: html,
+    printDoc: printDoc, RISK: RISK, URGENCY: URGENCY, STATUS: STATUS, KIND: KIND, LIMIT: LIMIT };
+  return api;
+})();
+if (typeof module !== 'undefined' && module.exports) module.exports = EDSummary;</script>
+<script>
+(function () {
+  'use strict';
+  var values = [];
+  var fileInput = document.getElementById('file');
+  var report = document.getElementById('report');
+  var download = document.getElementById('download');
+  var preview = document.getElementById('preview');
+
+  function esc(s) {
+    return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function show(batch) {
+    values = [];
+    var lines = [];
+    if (!batch.ok) {
+      lines.push('<span class="bad">' + esc(batch.errors[0]) + '</span>');
+    } else {
+      batch.items.forEach(function (item) {
+        var label = '第 ' + item.index + ' 筆' + (item.bed ? '（床 ' + esc(item.bed) + '）' : '');
+        if (item.ok) {
+          values.push(item.value);
+          lines.push('<li class="ok">' + label + '：通過</li>');
+        } else {
+          lines.push('<li class="bad">' + label + '：' + esc(item.errors[0]) + '</li>');
+        }
+        item.warnings.forEach(function (w) {
+          lines.push('<li class="warn">' + label + '：' + esc(w) + '</li>');
+        });
+      });
+      lines.unshift('<strong>共 ' + batch.items.length + ' 筆，可列印 ' + values.length + ' 筆</strong><ul>');
+      lines.push('</ul>');
+    }
+    report.innerHTML = lines.join('');
+    report.hidden = false;
+    download.disabled = !values.length;
+    preview.disabled = !values.length;
+  }
+
+  function pageBlob() {
+    return new Blob([EDSummary.printDoc(values)], { type: 'text/html;charset=utf-8' });
+  }
+
+  document.getElementById('usePaste').addEventListener('click', function () {
+    show(EDSummary.parseBatch(document.getElementById('paste').value));
+  });
+
+  fileInput.addEventListener('change', function () {
+    var file = fileInput.files && fileInput.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () { show(EDSummary.parseBatch(reader.result)); };
+    reader.readAsText(file, 'utf-8');
+  });
+
+  download.addEventListener('click', function () {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(pageBlob());
+    a.download = 'summary-print-' + new Date().toISOString().slice(0, 10) + '.html';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 300000);
+  });
+
+  preview.addEventListener('click', function () {
+    var url = URL.createObjectURL(pageBlob());
+    window.open(url, '_blank');
+    setTimeout(function () { URL.revokeObjectURL(url); }, 300000);
+  });
+})();
+</script>
+</body>
+</html>
