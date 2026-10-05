@@ -427,9 +427,7 @@ var EDSummary = (function () {
   }
 
   // Card markup. Every value goes through esc(), so the note cannot inject markup.
-  // opts.columns puts problems and suggestions side by side (print only; the phone keeps one column).
-  function html(value, esc, opts) {
-    var cols = !!(opts && opts.columns);
+  function html(value, esc) {
     var riskClass = value.risk === 'high' ? 'sum-r-high' : value.risk === 'medium' ? 'sum-r-mid' : 'sum-r-low';
     var out = '<div class="sum">';
     out += '<div class="sum-head">'
@@ -437,7 +435,6 @@ var EDSummary = (function () {
       + '<span class="sum-pill ' + riskClass + '">' + esc(RISK[value.risk]) + '</span>'
       + '<span class="sum-pill sum-u-' + esc(value.urgency) + '">' + esc(URGENCY[value.urgency]) + '</span></div>';
     if (value.summary) out += '<div class="sum-line">' + esc(value.summary) + '</div>';
-    if (cols) out += '<div class="sum-cols"><div class="sum-col">';
     if (value.problems.length) {
       out += '<div class="sum-h">重要問題</div><ol class="sum-list">';
       value.problems.forEach(function (p) {
@@ -448,7 +445,6 @@ var EDSummary = (function () {
       });
       out += '</ol>';
     }
-    if (cols) out += '</div><div class="sum-col">';
     if (value.suggestions.length) {
       out += '<div class="sum-h">建議</div><ul class="sum-list">';
       value.suggestions.forEach(function (s) {
@@ -460,7 +456,6 @@ var EDSummary = (function () {
       });
       out += '</ul>';
     }
-    if (cols) out += '</div></div>';
     out += '<div class="sum-h">出院</div><div class="sum-f">'
       + (value.discharge.consider ? '<b>可考慮出院</b>' : '尚需住院')
       + (value.discharge.reason ? '：' + esc(value.discharge.reason) : '') + '</div>';
@@ -490,71 +485,68 @@ var EDSummary = (function () {
     };
   }
 
-  // Printable pages: two patients per A4 sheet, each card half a page, the bottom sixth left for notes.
-  // The writing area takes whatever height the content leaves, never less than a sixth of the page.
+  // Printable pages: A4, two patients to a sheet, one patient to each half. Inside its half a card is set
+  // in two columns that read down the left column and then the right, so the same text takes less room.
+  // No writing area: the whole sheet holds content. A patient too long for a half sheet takes the whole sheet.
   // The chart number is never printed; the bed is the identifier on paper.
   var PRINT_CSS = [
     '@page { size: A4; margin: 0 }',
     '* { box-sizing: border-box }',
     'html, body { margin: 0; background: #fff; color: #111 }',
     'body { font: 9.5pt/1.35 "Noto Sans TC","Microsoft JhengHei",sans-serif }',
-    '.page { width: 210mm; height: 297mm; display: flex; flex-direction: column; overflow: hidden; break-after: page }',
+    '.page { width: 210mm; height: 297mm; padding: 4mm; display: flex; flex-direction: column; overflow: hidden; break-after: page }',
     '.page:last-child { break-after: auto }',
-    '.card { height: 148.5mm; padding: 5mm 9mm 0; display: flex; flex-direction: column; overflow: hidden }',
+    '.card { flex: 0 0 auto; display: flex; flex-direction: column; overflow: hidden }',
     '.card + .card { border-top: 0.3mm dashed #999 }',
-    '.hd { display: flex; align-items: center; gap: 3mm; flex-wrap: wrap; margin-bottom: 1.5mm; padding-bottom: 1mm; border-bottom: 0.4mm solid #333 }',
-    '.bed { font-size: 14pt; font-weight: 700; margin-right: 1mm }',
+    '.hd { flex: 0 0 auto; display: flex; align-items: center; gap: 3mm; flex-wrap: wrap; margin-bottom: 1.2mm; padding-bottom: 0.8mm; border-bottom: 0.4mm solid #333 }',
+    '.bed { font-size: 13pt; font-weight: 700 }',
     '.gen { font-size: 8pt; color: #666 }',
     '.warn { color: #b00; font-weight: 700; font-size: 8.5pt; margin-left: auto }',
-    '.body { flex: 0 0 auto }',
-    '.write { flex: 1 1 0; min-height: 0; border-top: 0.2mm dotted #888; padding-top: 1mm; font-size: 7.5pt; color: #888;',
-    '  background: repeating-linear-gradient(to bottom, transparent 0 6.4mm, #d0d0d0 6.4mm 6.6mm);',
-    '  -webkit-print-color-adjust: exact; print-color-adjust: exact }',
+    '.body { flex: 1 1 0; min-height: 0; column-count: 2; column-gap: 5mm; column-rule: 0.2mm solid #ccc; column-fill: balance; overflow: hidden }',
+    '.sum { break-inside: auto }',
     '.sum-bed { display: none }',
-    '.sum-cols { display: grid; grid-template-columns: 1fr 1fr; column-gap: 4mm; align-items: start }',
-    '.sum-col { min-width: 0 }',
-    '.sum-head { display: flex; gap: 2mm; margin-bottom: 1mm; flex-wrap: wrap }',
+    '.sum-head { display: flex; gap: 2mm; margin-bottom: 1mm; flex-wrap: wrap; break-inside: avoid }',
     '.sum-pill { font-size: 8.5pt; font-weight: 700; padding: 0 2.5mm; border: 0.3mm solid #333; border-radius: 3mm }',
     '.sum-r-high, .sum-u-immediate { background: #f4d6d1; border-color: #b3261e; color: #8a1c14 }',
     '.sum-r-mid, .sum-u-today { background: #fbe9c4; border-color: #b8741a; color: #7a4a0a }',
     '.sum-u-observe { background: #dcebf5; border-color: #3a6ea5; color: #24527a }',
     '.sum-r-low, .sum-u-consider_discharge { background: #dff0e2; border-color: #4f7f3a; color: #355a25 }',
-    '.sum-line { font-weight: 700; font-size: 10pt; margin: 0.5mm 0 1mm }',
-    '.sum-h { font-weight: 700; border-bottom: 0.2mm solid #bbb; margin-top: 1.2mm; font-size: 9pt }',
+    '.sum-line { font-weight: 700; font-size: 10pt; margin: 0.5mm 0 1mm; break-inside: avoid }',
+    '.sum-h { font-weight: 700; border-bottom: 0.2mm solid #bbb; margin-top: 1.2mm; font-size: 9pt; break-after: avoid }',
     '.sum ol.sum-list { list-style: decimal; margin: 0.4mm 0 0; padding-left: 5mm }',
     '.sum ul.sum-list { list-style: disc; margin: 0.4mm 0 0; padding-left: 5mm }',
-    '.sum li { margin: 0 0 0.8mm }',
+    '.sum li { margin: 0 0 0.8mm; break-inside: avoid }',
     '.sum-f { margin-top: 0.2mm }',
     '.sum-b { font-size: 7.8pt; color: #555; margin-top: 0.2mm }',
     '.sum-st { font-size: 7.5pt; font-weight: 700; border: 0.2mm solid currentColor; padding: 0 1.2mm; border-radius: 1mm; margin-left: 1mm }',
     '.sum-st-untreated { color: #b3261e } .sum-st-in_progress { color: #b8741a } .sum-st-addressed { color: #355a25 }',
     '.sum-kind { font-size: 7.5pt; font-weight: 700; padding: 0 1.2mm; border-radius: 1mm; background: #333; color: #fff; margin-right: 1mm }',
     '.sum-k-test { background: #3a6ea5 } .sum-k-treatment { background: #5b4bb0 } .sum-k-drug { background: #b8741a }',
+    '@media print { .page { break-inside: avoid } }',
   ].join('\n');
 
-  // Runs in the printed file. A card whose text does not fit its area is marked in print, never clipped silently.
-  // Fit each card before printing: content that runs past the half page is scaled down in steps
-  // (down to 75%), so nothing is ever cut off. Only if it still does not fit is the card marked in print.
-  // Runs in the printed file. Each patient is measured in the browser and placed:
-  // two to a sheet when the card fits half a page at 75% size or more, otherwise one to a full sheet.
-  // Text is scaled to fit, never cut. The writing area gets whatever height is left.
+  // Runs in the printed file. Each patient is measured in the browser before it is placed.
+  // Two columns overflow sideways when the text is longer than the box, so a card that spills is scaled down
+  // (to 75% on a half sheet, then to 60% on a whole sheet) until it fits. Only if it still spills at the
+  // smallest size is it marked in print, never clipped silently.
   var PRINT_LAYOUT = [
     '(function () {',
-    '  var HALF = 148.5, FULL = 297, MIN_HALF = 0.75, MIN_FULL = 0.6;',
+    '  var HALF = 144.5, FULL = 289, MIN_HALF = 0.75, MIN_FULL = 0.6;',
     "  var src = document.getElementById('src');",
     "  var out = document.getElementById('out');",
     "  var probe = document.createElement('div');",
-    "  probe.style.cssText = 'position:absolute;left:-20000px;top:0;width:210mm';",
+    "  probe.style.cssText = 'position:absolute;left:-20000px;top:0;width:202mm';",
     '  document.body.appendChild(probe);',
+    '  function spills(body) { return body.scrollWidth > body.clientWidth + 1; }',
     '  function fit(card, heightMm, minZoom) {',
     "    card.style.height = heightMm + 'mm';",
     "    var b = card.querySelector('.body'), z = 1;",
     '    b.style.zoom = 1;',
-    '    while (card.scrollHeight > card.clientHeight + 1 && z > minZoom) {',
+    '    while (spills(b) && z > minZoom) {',
     '      z = Math.max(minZoom, Math.round((z - 0.05) * 100) / 100);',
     '      b.style.zoom = z;',
     '    }',
-    '    return card.scrollHeight > card.clientHeight + 1 ? -1 : z;',
+    '    return spills(b) ? -1 : z;',
     '  }',
     "  var cards = Array.prototype.slice.call(src.querySelectorAll('.card'));",
     '  cards.forEach(function (card) {',
@@ -606,7 +598,7 @@ var EDSummary = (function () {
       var made = v.generatedAt ? '<span class="gen">' + esc(v.generatedAt.replace('T', ' ')) + '</span>' : '';
       return '<div class="card"><div class="hd"><span class="bed">'
         + esc(v.bed ? '床 ' + v.bed : '（無床號）') + '</span>' + made + '</div>'
-        + '<div class="body">' + html(v, esc, { columns: true }) + '</div><div class="write">筆記</div></div>';
+        + '<div class="body">' + html(v, esc) + '</div></div>';
     });
     // The cards are placed into sheets by the script in the browser, which measures each one first.
     return '<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">'
