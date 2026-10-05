@@ -298,7 +298,7 @@ var EDSummary = (function () {
     '* { box-sizing: border-box }',
     'html, body { margin: 0; background: #fff; color: #111 }',
     'body { font: 9.5pt/1.35 "Noto Sans TC","Microsoft JhengHei",sans-serif }',
-    '.page { width: 210mm; height: 296mm; padding: 4mm; display: flex; flex-direction: column; overflow: hidden; break-after: page }',
+    '.page { width: 210mm; height: 286mm; padding: 4mm; display: flex; flex-direction: column; overflow: hidden; break-after: page }',
     '.page:last-child { break-after: auto }',
     '.card { flex: 0 0 auto; display: flex; flex-direction: column; overflow: hidden }',
     '.card + .card { border-top: 0.3mm dashed #999 }',
@@ -326,7 +326,6 @@ var EDSummary = (function () {
     '.sum-st-untreated { color: #b3261e } .sum-st-in_progress { color: #b8741a } .sum-st-addressed { color: #355a25 }',
     '.sum-kind { font-size: 7.5pt; font-weight: 700; padding: 0 1.2mm; border-radius: 1mm; background: #333; color: #fff; margin-right: 1mm }',
     '.sum-k-test { background: #3a6ea5 } .sum-k-treatment { background: #5b4bb0 } .sum-k-drug { background: #b8741a }',
-    '@media print { .page { break-inside: avoid } }',
     '.sum-ov { background: #f3f5f6; border-left: 0.8mm solid #5b6a75; padding: 0.8mm 2mm; margin: 0 0 1.2mm; font-size: 8.8pt; break-inside: avoid }',
     '.sum-ov div { margin: 0.3mm 0 }',
   ].join('\n');
@@ -337,7 +336,7 @@ var EDSummary = (function () {
   // smallest size is it marked in print, never clipped silently.
   var PRINT_LAYOUT = [
     '(function () {',
-    '  var HALF = 144, FULL = 288, MIN_HALF = 0.75, MIN_FULL = 0.6;',
+    '  var HALF = 139, FULL = 278, MIN_HALF = 0.75, MIN_FULL = 0.6;',
     "  var src = document.getElementById('src');",
     "  var out = document.getElementById('out');",
     "  var probe = document.createElement('div');",
