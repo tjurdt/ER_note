@@ -516,7 +516,7 @@ var EDSummary = (function () {
     '* { box-sizing: border-box }',
     'html, body { margin: 0; background: #fff; color: #111 }',
     'body { font: 9.5pt/1.35 "Noto Sans TC","Microsoft JhengHei",sans-serif }',
-    '.page { width: 210mm; height: 297mm; padding: 4mm; display: flex; flex-direction: column; overflow: hidden; break-after: page }',
+    '.page { width: 210mm; height: 296mm; padding: 4mm; display: flex; flex-direction: column; overflow: hidden; break-after: page }',
     '.page:last-child { break-after: auto }',
     '.card { flex: 0 0 auto; display: flex; flex-direction: column; overflow: hidden }',
     '.card + .card { border-top: 0.3mm dashed #999 }',
@@ -547,17 +547,6 @@ var EDSummary = (function () {
     '@media print { .page { break-inside: avoid } }',
     '.sum-ov { background: #f3f5f6; border-left: 0.8mm solid #5b6a75; padding: 0.8mm 2mm; margin: 0 0 1.2mm; font-size: 8.8pt; break-inside: avoid }',
     '.sum-ov div { margin: 0.3mm 0 }',
-    '.lpage { width: 210mm; height: 297mm; padding: 4mm; display: flex; flex-direction: column; overflow: hidden; break-after: page }',
-    '.lhd { flex: 0 0 auto; display: flex; justify-content: space-between; align-items: baseline; font-weight: 700; font-size: 10pt; border-bottom: 0.4mm solid #333; padding-bottom: 0.8mm; margin-bottom: 1mm }',
-    '.lhd-r { font-weight: 400; font-size: 8pt; color: #666 }',
-    '.lrows { flex: 1 1 0; min-height: 0; display: grid; grid-template-rows: repeat(15, 1fr) }',
-    '.lrow { display: grid; grid-template-columns: 38mm 1fr 58mm; column-gap: 2mm; border-bottom: 0.2mm solid #aaa; overflow: hidden; padding: 0.8mm 0 }',
-    '.lbed { display: flex; flex-direction: column; align-items: flex-start; gap: 0.6mm; font-size: 9pt }',
-    '.lbed .sum-pill { font-size: 7.5pt }',
-    '.linfo { min-width: 0; overflow: hidden; font-size: 8.8pt; line-height: 1.3 }',
-    '.lreason { font-weight: 700; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden }',
-    '.ltodo { color: #444; font-size: 8pt; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden }',
-    '.lnote { border-left: 0.2mm dotted #999; background: repeating-linear-gradient(to bottom, transparent 0 4.6mm, #d0d0d0 4.6mm 4.8mm); -webkit-print-color-adjust: exact; print-color-adjust: exact }',
   ].join('\n');
 
   // Runs in the printed file. Each patient is measured in the browser before it is placed.
@@ -566,7 +555,7 @@ var EDSummary = (function () {
   // smallest size is it marked in print, never clipped silently.
   var PRINT_LAYOUT = [
     '(function () {',
-    '  var HALF = 144.5, FULL = 289, MIN_HALF = 0.75, MIN_FULL = 0.6;',
+    '  var HALF = 144, FULL = 288, MIN_HALF = 0.75, MIN_FULL = 0.6;',
     "  var src = document.getElementById('src');",
     "  var out = document.getElementById('out');",
     "  var probe = document.createElement('div');",
@@ -623,29 +612,6 @@ var EDSummary = (function () {
     '})();',
   ].join('\n');
 
-  // First pages: the overall patient list, one block per patient (about fifteen to a sheet) with room for notes.
-  function listPages(values, esc) {
-    var PER = 15, out = '';
-    for (var s = 0; s < values.length; s += PER) {
-      var group = values.slice(s, s + PER);
-      var made = values[0].generatedAt ? values[0].generatedAt.replace('T', ' ') : '';
-      out += '<section class="lpage"><div class="lhd"><span>床位總覽（' + (s + 1) + '–' + (s + group.length) + '，共 ' + values.length + ' 床）</span><span class="lhd-r">' + esc(made) + '</span></div><div class="lrows">';
-      group.forEach(function (v) {
-        var todo = v.problems.filter(function (p) { return p.status !== 'addressed'; }).map(function (p) { return p.title; });
-        var riskClass = v.risk === 'high' ? 'sum-r-high' : v.risk === 'medium' ? 'sum-r-mid' : 'sum-r-low';
-        var reason = (v.overview && v.overview.reason) || v.summary;
-        out += '<div class="lrow"><div class="lbed"><b>' + esc(v.bed ? '床 ' + v.bed : '（無床號）') + '</b>'
-          + '<span class="sum-pill ' + riskClass + '">' + esc(RISK[v.risk]) + '</span>'
-          + '<span class="sum-pill sum-u-' + esc(v.urgency) + '">' + esc(URGENCY[v.urgency]) + '</span></div>'
-          + '<div class="linfo"><div class="lreason">' + esc(reason) + '</div>'
-          + (todo.length ? '<div class="ltodo">待辦問題：' + esc(todo.join('；')) + '</div>' : '') + '</div>'
-          + '<div class="lnote"></div></div>';
-      });
-      out += '</div></section>';
-    }
-    return out;
-  }
-
   function printDoc(values) {
     var esc = function (s) {
       return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -662,7 +628,7 @@ var EDSummary = (function () {
     return '<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">'
       + '<meta name="viewport" content="width=device-width,initial-scale=1"><title>急診重點摘要</title>'
       + '<style>' + PRINT_CSS + '</style></head><body>'
-      + '<div id="src" style="display:none">' + cards.join('') + '</div><div id="out">' + listPages(values, esc) + '</div>'
+      + '<div id="src" style="display:none">' + cards.join('') + '</div><div id="out"></div>'
       + '<' + 'script>' + PRINT_LAYOUT + '<\/script></body></html>';
   }
 
